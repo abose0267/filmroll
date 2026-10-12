@@ -11,7 +11,7 @@ import { formatDateTime, randomRequestId, relativeTime } from '@/lib/format';
 import { LIMITS, REACTIONS } from '@shared/constants';
 import { PRESETS } from '@shared/presets';
 import type { CommentDoc, MemberDoc, PhotoDoc, ReactionDoc, ReactionEmoji } from '@shared/types';
-import { Avatar, Button, IconButton, Sheet, TextInput, cx, useToast } from './ui';
+import { Avatar, Button, IconButton, Sheet, TextInput, cx, useStatusBarColor, useToast } from './ui';
 import { PhotoImage, aspectOf } from './film';
 
 interface Props {
@@ -35,6 +35,7 @@ export default function PhotoViewer({ photos, index, onIndex, onClose, people, c
   const [confirmShare, setConfirmShare] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [chrome, setChrome] = useState(true);
+  useStatusBarColor('#000000');
   const photo = photos[index];
   const gid = photo.groupId;
   const rid = photo.rollId;

@@ -237,7 +237,7 @@ export function EmptyState({ art, title, children, action }: { art?: ReactNode; 
 export function PageHeader({ title, back, right, sub, background, color }: { title: ReactNode; back?: boolean | string; right?: ReactNode; sub?: ReactNode; background?: string; color?: string }) {
   const nav = useNavigate();
   return (
-    <header className={cx('sticky top-0 z-30 px-4 pb-2 pt-safe', !background && 'bg-paper/90 backdrop-blur-md')} style={background ? { background, color } : undefined}>
+    <header className="px-4 pb-2 pt-safe" style={background ? { background, color } : undefined}>
       <div className="flex min-h-11 items-center gap-1">
         {back && (
           <IconButton label="Back" onClick={() => (typeof back === 'string' ? nav(back) : history.length > 1 ? nav(-1) : nav('/'))} className="-ml-2" style={color ? { color } : undefined}>
@@ -288,3 +288,25 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 }
 
 export const useToast = () => useContext(ToastCtx);
+
+/**
+ * The strip behind the phone's status bar (clock/battery). Headers scroll
+ * away, so this keeps content from showing through the status bar in the
+ * installed app. Pages can tint it to match their own top colour.
+ */
+export function useStatusBarColor(color: string | undefined) {
+  useEffect(() => {
+    if (!color) return;
+    const root = document.documentElement;
+    const prev = root.style.getPropertyValue('--statusbar');
+    root.style.setProperty('--statusbar', color);
+    return () => {
+      if (prev) root.style.setProperty('--statusbar', prev);
+      else root.style.removeProperty('--statusbar');
+    };
+  }, [color]);
+}
+
+export function StatusBarBackdrop() {
+  return <div aria-hidden className="pointer-events-none fixed inset-x-0 top-0 z-[45]" style={{ height: 'env(safe-area-inset-top, 0px)', background: 'var(--statusbar, var(--color-paper))' }} />;
+}

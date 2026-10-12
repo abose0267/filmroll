@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { Copy, RefreshCw, Settings, Share2, UserPlus } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useGroup, useMembers, useMyMembership, useRoll, useRolls } from '@/hooks/useData';
-import { Avatar, Button, EmptyState, FullScreenLoader, IconButton, PageHeader, Sheet, Spinner, useToast } from '@/components/ui';
+import { Avatar, Button, EmptyState, FullScreenLoader, IconButton, PageHeader, Sheet, Spinner, useStatusBarColor, useToast } from '@/components/ui';
 import { DisposableCamera, ExposureMeter, FilmCanister } from '@/components/film';
 import { api, errorMessage } from '@/lib/api';
 import { dateRange } from '@/lib/format';
@@ -128,6 +128,7 @@ export default function GroupPage() {
   const { data: rolls, loading: rollsLoading } = useRolls(gid);
   const [inviting, setInviting] = useState(params.get('invite') === '1');
   const nav = useNavigate();
+  useStatusBarColor(group ? themeOf(group).bg : undefined);
 
   if (loading) return <FullScreenLoader />;
   if (!group || error) {
@@ -140,6 +141,7 @@ export default function GroupPage() {
 
   return (
     <div>
+      <div style={{ background: t.bg, color: t.fg }} className="rounded-b-[32px]">
       <PageHeader
           back="/"
           background={t.bg}
@@ -152,7 +154,6 @@ export default function GroupPage() {
             </>
           }
         />
-      <div style={{ background: t.bg, color: t.fg }} className="-mt-px rounded-b-[32px]">
         <div className="px-5 pb-6">
           <button onClick={() => nav(`/g/${group.id}/settings`)} className="flex items-center gap-3 text-left" aria-label="See members">
             <div className="flex">

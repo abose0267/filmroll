@@ -97,7 +97,7 @@ export default function HomePage() {
 
   return (
     <div className="px-4">
-      <header className="sticky top-0 z-30 -mx-4 mb-1 flex items-center justify-between bg-paper/95 px-4 pb-3 pt-safe backdrop-blur-md">
+      <header className="mb-1 flex items-center justify-between pb-3 pt-safe">
         <div>
           <p className="font-mono text-[11px] uppercase tracking-[0.25em] text-ink-faint">FilmRoll</p>
           <h1 className="font-display text-[28px] font-semibold leading-tight">{greeting()}, {firstName}</h1>

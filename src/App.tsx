@@ -1,7 +1,7 @@
 import { lazy, Suspense, type ReactNode } from 'react';
 import { createBrowserRouter, Navigate, RouterProvider, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from '@/hooks/useAuth';
-import { Button, FullScreenLoader, ToastProvider } from '@/components/ui';
+import { Button, FullScreenLoader, StatusBarBackdrop, ToastProvider } from '@/components/ui';
 import AppShell, { OfflineBanner } from '@/components/AppShell';
 import { firebaseConfigured } from '@/lib/firebase';
 import LandingPage from '@/pages/LandingPage';
@@ -99,6 +99,7 @@ export default function App() {
     <ToastProvider>
       <AuthProvider>
         <OfflineBanner />
+        <StatusBarBackdrop />
         <div className="grain h-full">
           <RouterProvider router={router} />
         </div>

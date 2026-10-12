@@ -4,7 +4,7 @@ import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
 import { CalendarDays, Camera as CameraIcon, Check, MapPin, RotateCcw, SwitchCamera, Volume2, VolumeX, X, Zap, ZapOff } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useActiveRolls, useMyGroups, useOnline } from '@/hooks/useData';
-import { Button, FullScreenLoader, IconButton, TextArea, TextInput, cx, useToast } from '@/components/ui';
+import { Button, FullScreenLoader, IconButton, TextArea, TextInput, cx, useStatusBarColor, useToast } from '@/components/ui';
 import { DisposableCamera, FilmStrip } from '@/components/film';
 import { errorMessage } from '@/lib/api';
 import { decode } from '@/lib/image';
@@ -127,6 +127,7 @@ function Camera({ roll, group }: { roll: RollDoc; group: GroupDoc }) {
   const toast = useToast();
   const reduce = useReducedMotion();
   const online = useOnline();
+  useStatusBarColor('#2E2B29');
   const { profile } = useAuth();
   const video = useRef<HTMLVideoElement>(null);
   const stream = useRef<MediaStream | null>(null);
