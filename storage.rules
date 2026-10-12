@@ -1,0 +1,39 @@
+rules_version = '2';
+
+// FilmRoll — Storage security rules.
+//
+// - uploads/{uid}/{reservationId}/{variant}: the owner may write their own
+//   in-flight exposure files. NOBODY can read them (not even the owner).
+//   The finalize function validates and moves them; the sweeper deletes leftovers.
+// - photos/**: no client access at all. Developed photos are served by the
+//   `photo` function after checking membership and development on every request,
+//   so no long-lived download URLs ever exist for private photos.
+// - avatars/{uid}/*: profile pictures, readable by signed-in users.
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() { return request.auth != null; }
+    function isImage(maxBytes) {
+      return request.resource.contentType.matches('image/(jpeg|png|webp)') && request.resource.size > 0 && request.resource.size <= maxBytes;
+    }
+
+    match /uploads/{uid}/{resId}/{variant} {
+      allow read: if false;
+      allow create, update: if signedIn() && request.auth.uid == uid
+        && ((variant == 'original' && isImage(15 * 1024 * 1024))
+          || (variant == 'display' && isImage(4 * 1024 * 1024) && request.resource.contentType == 'image/jpeg')
+          || (variant == 'thumb' && isImage(400 * 1024) && request.resource.contentType == 'image/jpeg'));
+      allow delete: if signedIn() && request.auth.uid == uid;
+    }
+
+    match /avatars/{uid}/{file} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.auth.uid == uid && isImage(2 * 1024 * 1024);
+      allow update: if false;
+      allow delete: if signedIn() && request.auth.uid == uid;
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

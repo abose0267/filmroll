@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.node.tsbuildinfo",
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "allowImportingTsExtensions": true,
+    "types": ["node"],
+    "paths": { "@shared/*": ["./shared/*"] }
+  },
+  "include": ["vite.config.ts", "vitest.rules.config.ts", "scripts", "tests"],
+  // e2e.ts imports functions/src (needs functions/node_modules); it is type-checked when run via tsx
+  "exclude": ["scripts/e2e.ts"]
+}

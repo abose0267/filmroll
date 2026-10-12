@@ -1,0 +1,140 @@
+rules_version = '2';
+
+// FilmRoll — Firestore security rules.
+//
+// Principles:
+// - Groups, members, rolls, invites, reservations and photo records are written
+//   only by Cloud Functions (Admin SDK). Clients cannot touch counts or status.
+// - Roll metadata is readable by members; it never contains photo content.
+// - Photo records (captions, locations, storage paths) are readable only after
+//   the roll is developed — not even the uploader can read them before.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function isSelf(uid) { return signedIn() && request.auth.uid == uid; }
+    function memberPath(gid) { return /databases/$(database)/documents/groups/$(gid)/members/$(request.auth.uid); }
+    function isMember(gid) { return signedIn() && exists(memberPath(gid)); }
+    function member(gid) { return get(memberPath(gid)).data; }
+    function roll(gid, rid) { return get(/databases/$(database)/documents/groups/$(gid)/rolls/$(rid)).data; }
+    function group(gid) { return get(/databases/$(database)/documents/groups/$(gid)).data; }
+
+    // Developed + member + (history shared, or the roll started after they joined).
+    function canSeeRoll(gid, rid) {
+      return isMember(gid)
+        && roll(gid, rid).status == 'developed'
+        && (group(gid).settings.shareHistory == true || roll(gid, rid).createdAt >= member(gid).joinedAt);
+    }
+
+    function isStr(v, max) { return v is string && v.size() <= max; }
+    function recent(t) { return t is int && t > request.time.toMillis() - 300000 && t < request.time.toMillis() + 300000; }
+    function changedOnly(keys) { return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys); }
+
+    function validPrefs(p) {
+      return p is map && p.keys().hasOnly(['rollStarted', 'milestones', 'developed', 'comments', 'memories'])
+        && p.rollStarted is bool && p.milestones is bool && p.developed is bool && p.comments is bool && p.memories is bool;
+    }
+    function validProfile(d) {
+      return isStr(d.displayName, 40) && d.displayName.trim().size() > 0
+        && (d.photoURL == null || isStr(d.photoURL, 1000))
+        && isStr(d.city, 60) && isStr(d.bio, 160)
+        && d.onboarded is bool && d.showMemories is bool
+        && validPrefs(d.notificationPrefs);
+    }
+
+    match /users/{uid} {
+      allow read: if isSelf(uid);
+      allow create: if isSelf(uid)
+        && request.resource.data.keys().hasOnly(['uid', 'displayName', 'photoURL', 'city', 'bio', 'createdAt', 'onboarded', 'groupIds', 'notificationPrefs', 'showMemories'])
+        && request.resource.data.uid == uid
+        && request.resource.data.groupIds == []
+        && recent(request.resource.data.createdAt)
+        && validProfile(request.resource.data);
+      // groupIds is maintained by functions only.
+      allow update: if isSelf(uid)
+        && changedOnly(['displayName', 'photoURL', 'city', 'bio', 'onboarded', 'notificationPrefs', 'showMemories'])
+        && validProfile(request.resource.data);
+      allow delete: if false; // use the deleteAccount function
+
+      match /notifications/{nid} {
+        allow read, delete: if isSelf(uid);
+        allow update: if isSelf(uid) && changedOnly(['read']) && request.resource.data.read is bool;
+        allow create: if false;
+      }
+
+      // Private favourites: only for photos the user can actually see.
+      match /favorites/{fid} {
+        allow read, delete: if isSelf(uid);
+        allow create: if isSelf(uid)
+          && request.resource.data.keys().hasOnly(['groupId', 'rollId', 'photoId', 'createdAt'])
+          && fid == request.resource.data.rollId + '_' + request.resource.data.photoId
+          && isStr(request.resource.data.groupId, 64) && isStr(request.resource.data.rollId, 64) && isStr(request.resource.data.photoId, 64)
+          && recent(request.resource.data.createdAt)
+          && canSeeRoll(request.resource.data.groupId, request.resource.data.rollId);
+        allow update: if false;
+      }
+    }
+
+    match /groups/{gid} {
+      allow read: if isMember(gid);
+      allow write: if false;
+
+      match /private/{doc} {
+        allow read, write: if false;
+      }
+
+      match /members/{uid} {
+        allow read: if isMember(gid);
+        allow write: if false;
+      }
+
+      match /rolls/{rid} {
+        allow read: if isMember(gid);
+        allow write: if false;
+
+        match /reservations/{resId} {
+          allow read, write: if false;
+        }
+
+        match /photos/{pid} {
+          allow read: if canSeeRoll(gid, rid);
+          allow write: if false;
+        }
+
+        match /comments/{cid} {
+          allow read: if canSeeRoll(gid, rid);
+          allow create: if canSeeRoll(gid, rid)
+            && request.resource.data.keys().hasOnly(['id', 'photoId', 'uid', 'displayName', 'photoURL', 'text', 'createdAt'])
+            && request.resource.data.id == cid
+            && request.resource.data.uid == request.auth.uid
+            && request.resource.data.displayName == member(gid).displayName
+            && (request.resource.data.photoURL == null || isStr(request.resource.data.photoURL, 1000))
+            && isStr(request.resource.data.text, 400) && request.resource.data.text.trim().size() > 0
+            && recent(request.resource.data.createdAt)
+            && exists(/databases/$(database)/documents/groups/$(gid)/rolls/$(rid)/photos/$(request.resource.data.photoId));
+          allow update: if false;
+          allow delete: if isMember(gid) && (resource.data.uid == request.auth.uid || member(gid).role in ['owner', 'admin']);
+        }
+
+        // One reaction per person per photo: id = photoId_uid.
+        match /reactions/{reactionId} {
+          allow read: if canSeeRoll(gid, rid);
+          allow create, update: if canSeeRoll(gid, rid)
+            && reactionId == request.resource.data.photoId + '_' + request.auth.uid
+            && request.resource.data.keys().hasOnly(['photoId', 'uid', 'emoji', 'createdAt'])
+            && request.resource.data.uid == request.auth.uid
+            && request.resource.data.emoji in ['❤️', '😂', '🥹', '📸']
+            && recent(request.resource.data.createdAt)
+            && exists(/databases/$(database)/documents/groups/$(gid)/rolls/$(rid)/photos/$(request.resource.data.photoId));
+          allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+        }
+      }
+    }
+
+    match /invites/{code} {
+      allow read, write: if false;
+    }
+    match /rateLimits/{key} {
+      allow read, write: if false;
+    }
+  }
+}
