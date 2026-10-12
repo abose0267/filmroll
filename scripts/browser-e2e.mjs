@@ -147,6 +147,12 @@ try {
   await shot(alice.page, '05-group-active');
 
   console.log('Alice shoots with the (fake) camera');
+  // the ✕ closes the camera (and must work as the very first tap)
+  await alice.page.getByRole('button', { name: 'Capture a memory' }).click();
+  await alice.page.waitForURL(/\/camera/);
+  await alice.page.getByRole('button', { name: 'Close camera' }).click();
+  await alice.page.waitForURL(new RegExp(`/g/${gid}$`));
+  log(true, 'the ✕ closes the camera');
   await alice.page.getByRole('button', { name: 'Capture a memory' }).click();
   await alice.page.waitForURL(/\/camera/);
   await alice.page.waitForFunction(() => {

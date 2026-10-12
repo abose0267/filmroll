@@ -358,7 +358,7 @@ function Camera({ roll, group }: { roll: RollDoc; group: GroupDoc }) {
   const shutterReady = wound && stage === 'camera' && remaining > 0;
 
   return (
-    <main className="fixed inset-0 flex flex-col bg-body text-cream" aria-label="Camera" onPointerDown={enableTilt}>
+    <main className="fixed inset-0 flex flex-col bg-body text-cream" aria-label="Camera">
       {/* top bar */}
       <div className="flex items-center gap-2 px-3 pt-safe">
         <IconButton label="Close camera" onClick={leave} className="text-cream active:bg-white/10"><X className="size-6" /></IconButton>
@@ -442,7 +442,8 @@ function Camera({ roll, group }: { roll: RollDoc; group: GroupDoc }) {
                 >
                   <span className={cx('size-[64px] rounded-full shadow-[inset_0_-4px_0_rgba(0,0,0,0.2)] transition-colors', shutterReady ? 'bg-coral' : 'bg-coral/35')} />
                 </button>
-                <WindWheel wound={wound} onWound={() => setWound(true)} sound={sound} nudge={nudge} vertical={viewportLandscape} />
+                {/* iOS asks for motion access on a tap; asking on the first wind keeps it from swallowing other buttons (like ✕) */}
+                <WindWheel wound={wound} onWound={() => setWound(true)} onEngage={enableTilt} sound={sound} nudge={nudge} vertical={viewportLandscape} />
               </div>
             </div>
           </motion.section>

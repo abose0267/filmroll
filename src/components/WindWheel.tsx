@@ -12,7 +12,7 @@ const NOTCHES = 10;
  * shot before the shutter will fire. Drag it (either direction), scroll over
  * it, tap it notch by notch, or use the arrow keys.
  */
-export function WindWheel({ wound, onWound, sound, nudge, vertical }: { wound: boolean; onWound: () => void; sound: boolean; nudge: number; vertical?: boolean }) {
+export function WindWheel({ wound, onWound, onEngage, sound, nudge, vertical }: { wound: boolean; onWound: () => void; onEngage?: () => void; sound: boolean; nudge: number; vertical?: boolean }) {
   const reduce = useReducedMotion();
   const [travel, setTravel] = useState(wound ? WIND_DISTANCE : 0);
   const drag = useRef<{ x: number; y: number; moved: boolean } | null>(null);
@@ -72,6 +72,7 @@ export function WindWheel({ wound, onWound, sound, nudge, vertical }: { wound: b
       animate={!wound && !reduce ? { x: vertical ? 0 : [0, -3, 3, 0], y: vertical ? [0, -3, 3, 0] : 0 } : { x: 0, y: 0 }}
       transition={!wound && !reduce ? { duration: 0.5, repeat: Infinity, repeatDelay: 1.6 } : undefined}
       onPointerDown={(e) => {
+        onEngage?.();
         (e.target as Element).setPointerCapture?.(e.pointerId);
         drag.current = { x: e.clientX, y: e.clientY, moved: false };
       }}
@@ -94,6 +95,7 @@ export function WindWheel({ wound, onWound, sound, nudge, vertical }: { wound: b
       onPointerCancel={() => (drag.current = null)}
       onWheel={(e) => advance(Math.abs(e.deltaY) + Math.abs(e.deltaX))}
       onKeyDown={(e) => {
+        onEngage?.();
         if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' ', 'Enter'].includes(e.key)) {
           e.preventDefault();
           advance(WIND_DISTANCE / NOTCHES);
