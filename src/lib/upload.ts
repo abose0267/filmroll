@@ -61,7 +61,7 @@ export async function submitExposure(input: SubmitInput, onProgress: (p: SubmitP
   try {
     const out = await api.finalizeExposure({
       groupId: input.groupId, rollId: input.rollId, reservationId: res.reservationId,
-      caption: input.caption, location: input.location, capturedAt: input.capturedAt, preset: input.preset,
+      caption: input.caption, location: input.location, capturedAt: input.capturedAt, clientNow: Date.now(), preset: input.preset,
       sizes: { original: s('original'), display: s('display'), thumb: s('thumb') },
     });
     onProgress({ stage: 'done', progress: 1 });

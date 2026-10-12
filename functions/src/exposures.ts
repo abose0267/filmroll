@@ -18,7 +18,7 @@ import { REGION } from './config';
 import { HOUR, docId, newId, rateLimit, requireAuth, requireMember } from './util';
 import { advanceRoll } from './develop';
 import { notify, memberIds } from './notify';
-import { LIMITS, MAX_PENDING_PER_USER, RESERVATION_TTL_MS } from '@shared/constants';
+import { CAPTURE_MAX_AGE_MS, LIMITS, MAX_PENDING_PER_USER, RESERVATION_TTL_MS } from '@shared/constants';
 import { acceptsFinalization, newMilestones, reserveDenial, shotsRemaining } from '@shared/rolls';
 import { isPresetId } from '@shared/presets';
 import { cleanText, sniffImage } from '@shared/validation';
@@ -123,9 +123,16 @@ export const finalizeExposure = onCall(opts, async (req) => {
   const caption = cleanText(req.data?.caption, LIMITS.caption, { multiline: true });
   const location = cleanText(req.data?.location, LIMITS.location);
   const now = Date.now();
+  // Only fresh shots: measure the photo's age on the client's own clock (immune
+  // to device clock drift), then re-base the timestamp onto server time.
   const capturedAtRaw = Number(req.data?.capturedAt);
-  // client clocks drift; accept captures from the last year up to "now + 5 min"
-  const capturedAt = Number.isFinite(capturedAtRaw) && capturedAtRaw > now - 366 * 86_400_000 && capturedAtRaw < now + 300_000 ? capturedAtRaw : now;
+  const clientNowRaw = Number(req.data?.clientNow);
+  const clientNow = Number.isFinite(clientNowRaw) ? clientNowRaw : now;
+  const age = clientNow - capturedAtRaw;
+  if (!Number.isFinite(capturedAtRaw) || age > CAPTURE_MAX_AGE_MS || age < -60_000) {
+    throw new HttpsError('failed-precondition', 'Only photos taken just now can go on the roll. Take a new one!');
+  }
+  const capturedAt = now - Math.max(0, age);
   const sizes = { original: dims(req.data?.sizes?.original), display: dims(req.data?.sizes?.display), thumb: dims(req.data?.sizes?.thumb) };
 
   const resRef = reservationsCol(gid, rid).doc(resId);

@@ -26,7 +26,7 @@ export const api = {
   reserveExposure: fn<{ groupId: string; rollId: string; requestId: string }, { reservationId: string; expiresAt: number; uploadPrefix: string }>('reserveExposure'),
   releaseExposure: fn<{ groupId: string; rollId: string; reservationId: string }, { released: boolean }>('releaseExposure'),
   finalizeExposure: fn<
-    { groupId: string; rollId: string; reservationId: string; caption: string; location: string; capturedAt: number; preset: PresetId; sizes: { original: Size; display: Size; thumb: Size } },
+    { groupId: string; rollId: string; reservationId: string; caption: string; location: string; capturedAt: number; clientNow: number; preset: PresetId; sizes: { original: Size; display: Size; thumb: Size } },
     { photoId: string; duplicate: boolean; remaining: number; status: string }
   >('finalizeExposure'),
   deleteAccount: fn<{ confirm: 'DELETE' }, { photos: number; groups: number }>('deleteAccount'),

@@ -36,9 +36,9 @@ function GroupCard({ group, roll }: { group: GroupDoc; roll?: RollDoc }) {
         </div>
         {active && roll ? (
           <div className="mt-4 flex items-center gap-4">
-            <DisposableCamera preset={roll.preset} remaining={shotsRemaining(roll)} width={120} />
+            <DisposableCamera preset={roll.preset} remaining={shotsRemaining(roll)} width={112} className="shrink-0" />
             <div className="min-w-0 flex-1">
-              <p className="truncate font-semibold">{group.name}’s {roll.name}</p>
+              <p className="line-clamp-2 font-semibold leading-snug">{roll.name}</p>
               <p className="font-mono text-sm">{roll.exposuresUsed} / {roll.capacity} memories captured</p>
               <p className="text-sm opacity-75">{roll.status === 'developing' ? 'Developing now…' : developLabel(roll)}</p>
             </div>
@@ -97,7 +97,7 @@ export default function HomePage() {
 
   return (
     <div className="px-4">
-      <header className="flex items-center justify-between pb-2 pt-safe">
+      <header className="sticky top-0 z-30 -mx-4 mb-1 flex items-center justify-between bg-paper/95 px-4 pb-3 pt-safe backdrop-blur-md">
         <div>
           <p className="font-mono text-[11px] uppercase tracking-[0.25em] text-ink-faint">FilmRoll</p>
           <h1 className="font-display text-[28px] font-semibold leading-tight">{greeting()}, {firstName}</h1>

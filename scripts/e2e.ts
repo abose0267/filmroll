@@ -74,10 +74,10 @@ async function shoot(c: Client, gid: string, rid: string, opts: { caption?: stri
 async function upload(c: Client, prefix: string, bytes: Uint8Array = JPEG) {
   for (const v of ['original', 'display', 'thumb']) await uploadBytes(ref(c.st, prefix + v), bytes, { contentType: 'image/jpeg' });
 }
-function finalize(c: Client, gid: string, rid: string, reservationId: string, caption: string) {
+function finalize(c: Client, gid: string, rid: string, reservationId: string, caption: string, capturedAt = Date.now()) {
   const s = { width: 1, height: 1 };
   return call<{ photoId: string; duplicate: boolean; remaining: number; status: string }>(c, 'finalizeExposure', {
-    groupId: gid, rollId: rid, reservationId, caption, location: 'Somewhere', capturedAt: Date.now(), preset: 'warmVintage', sizes: { original: s, display: s, thumb: s },
+    groupId: gid, rollId: rid, reservationId, caption, location: 'Somewhere', capturedAt, clientNow: Date.now(), preset: 'warmVintage', sizes: { original: s, display: s, thumb: s },
   });
 }
 async function fetchPhoto(c: Client | null, gid: string, rid: string, pid: string, v = 'thumb') {
@@ -118,6 +118,7 @@ async function main() {
   check((await rollOf(alice, gid, r1)).exposuresReserved === 1, 'retry did not take a second slot');
   await rejects(finalize(alice, gid, r1, a.reservationId, 'early'), /didn.t finish uploading/i, 'finalize before upload fails without consuming the exposure');
   await upload(alice, a.uploadPrefix);
+  await rejects(finalize(alice, gid, r1, a.reservationId, 'old photo', Date.now() - 2 * 3_600_000), /taken just now/i, 'photos taken hours ago are rejected');
   const f1 = await finalize(alice, gid, r1, a.reservationId, 'my secret coffee');
   const f1b = await finalize(alice, gid, r1, a.reservationId, 'my secret coffee');
   check(f1b.duplicate && f1b.photoId === f1.photoId, 'finalizing twice is idempotent');

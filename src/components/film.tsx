@@ -48,7 +48,7 @@ export function DisposableCamera({ preset, remaining, label, width = 260, classN
         {/* label */}
         <text x="24" y="80" fill={c.text} fontFamily="Fraunces, serif" fontWeight="700" fontSize="15">FilmRoll</text>
         <text x="24" y="98" fill={c.text} fontFamily="DM Mono, monospace" fontSize="10" opacity="0.85">{PRESETS[preset].code}</text>
-        {label && <text x="236" y="80" textAnchor="end" fill={c.text} fontFamily="DM Sans, sans-serif" fontWeight="600" fontSize="10" opacity="0.9">{label.slice(0, 16)}</text>}
+        {label && <text x="178" y="80" fill={c.text} fontFamily="DM Sans, sans-serif" fontWeight="600" fontSize="9" opacity="0.9">{label.length > 13 ? `${label.slice(0, 12).trim()}…` : label}</text>}
         {/* counter window */}
         <rect x="200" y="94" width="38" height="22" rx="6" fill="#141210" />
         <text x="219" y="110" textAnchor="middle" fill="#F2C14E" fontFamily="DM Mono, monospace" fontWeight="500" fontSize="14">

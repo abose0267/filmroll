@@ -234,13 +234,13 @@ export function EmptyState({ art, title, children, action }: { art?: ReactNode; 
   );
 }
 
-export function PageHeader({ title, back, right, sub }: { title: ReactNode; back?: boolean | string; right?: ReactNode; sub?: ReactNode }) {
+export function PageHeader({ title, back, right, sub, background, color }: { title: ReactNode; back?: boolean | string; right?: ReactNode; sub?: ReactNode; background?: string; color?: string }) {
   const nav = useNavigate();
   return (
-    <header className="sticky top-0 z-30 bg-paper/90 px-4 pb-2 pt-safe backdrop-blur-md">
+    <header className={cx('sticky top-0 z-30 px-4 pb-2 pt-safe', !background && 'bg-paper/90 backdrop-blur-md')} style={background ? { background, color } : undefined}>
       <div className="flex min-h-11 items-center gap-1">
         {back && (
-          <IconButton label="Back" onClick={() => (typeof back === 'string' ? nav(back) : history.length > 1 ? nav(-1) : nav('/'))} className="-ml-2">
+          <IconButton label="Back" onClick={() => (typeof back === 'string' ? nav(back) : history.length > 1 ? nav(-1) : nav('/'))} className="-ml-2" style={color ? { color } : undefined}>
             <ChevronLeft className="size-6" />
           </IconButton>
         )}

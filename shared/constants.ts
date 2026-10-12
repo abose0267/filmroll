@@ -19,6 +19,14 @@ export const MAX_PENDING_PER_USER = 2;
  * in-flight uploads (at most one reservation TTL) before revealing.
  */
 export const DEVELOPING_GRACE_MS = RESERVATION_TTL_MS;
+/**
+ * Only fresh shots go on a roll: a photo must be submitted within this long of
+ * being taken (time spent on the caption screen included). Old camera-roll
+ * photos can't be added.
+ */
+export const CAPTURE_MAX_AGE_MS = 30 * 60 * 1000;
+/** The phone-camera fallback must hand back a file this new. */
+export const FALLBACK_FILE_MAX_AGE_MS = 5 * 60 * 1000;
 /** Earliest/latest allowed scheduled development, relative to roll start. */
 export const MIN_DEVELOP_DELAY_MS = 60 * 60 * 1000;
 export const MAX_DEVELOP_DELAY_MS = 366 * 24 * 60 * 60 * 1000;

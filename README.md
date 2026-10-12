@@ -64,7 +64,7 @@ The uploader gets confirmation and an updated exposure count, but can't reopen t
 | Member leaves before development | Their photos stay on the roll and are revealed; they lose access. |
 | Member joins after development | Sees past rolls unless the group turns off "New members see past rolls". |
 | Nobody shot anything | The roll develops on its date as an empty album with a prompt to start a new one. |
-| Camera unavailable or permission denied | Falls back to the phone's own camera (`capture=environment`) or the photo picker. |
+| Camera unavailable or permission denied | Falls back to the phone's own camera (`capture=environment`). There is no photo-library picker: the fallback only accepts a file created in the last 5 minutes, and the server rejects any photo submitted more than 30 minutes after it was taken. |
 | Account deletion | Removes your photos (exposures on live rolls are given back), comments, reactions, favorites and notifications, transfers ownership of your groups, then deletes your auth account. |
 
 ## Local development (Firebase emulators)
@@ -102,7 +102,7 @@ npm run test:e2e     # backend end-to-end: real callables, uploads, concurrency,
 node scripts/browser-e2e.mjs http://localhost:5173 e2e-screens   # mobile UI walkthrough (needs emulators + dev server + Chrome)
 ```
 
-`test:e2e` covers: invites; idempotent reservations; finalizing twice; rejecting non-image bytes; privacy before development (Firestore and the photo endpoint, including the uploader); 6 people racing for the last 3 exposures; automatic development when full; scheduled development with an upload in flight; empty rolls; cancelling; leaving and rejoining; history visibility; invite rotation; account deletion.
+`test:e2e` covers: invites; rejecting old photos; idempotent reservations; finalizing twice; rejecting non-image bytes; privacy before development (Firestore and the photo endpoint, including the uploader); 6 people racing for the last 3 exposures; automatic development when full; scheduled development with an upload in flight; empty rolls; cancelling; leaving and rejoining; history visibility; invite rotation; account deletion.
 
 `browser-e2e.mjs` drives two phone-sized users through the whole app in Chrome with a fake camera: sign-up, onboarding, creating a group, joining by invite, loading a roll, camera and gallery shots, the reveal, the album, the viewer, reactions, comments, notifications and reduced motion.
 

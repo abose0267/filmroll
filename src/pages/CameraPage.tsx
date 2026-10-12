@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import { CalendarDays, Camera as CameraIcon, ImagePlus, MapPin, RefreshCcw, SwitchCamera, Volume2, VolumeX, X, Zap, ZapOff } from 'lucide-react';
+import { CalendarDays, Camera as CameraIcon, MapPin, RefreshCcw, SwitchCamera, Volume2, VolumeX, X, Zap, ZapOff } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useActiveRolls, useMyGroups, useOnline } from '@/hooks/useData';
 import { Button, FullScreenLoader, IconButton, TextArea, TextInput, cx, useToast } from '@/components/ui';
@@ -11,7 +11,7 @@ import { decode, previewUrl, processPhoto } from '@/lib/image';
 import { submitExposure, type SubmitStage } from '@/lib/upload';
 import { playAdvance, playShutter, vibrate } from '@/lib/sound';
 import { randomRequestId } from '@/lib/format';
-import { LIMITS } from '@shared/constants';
+import { FALLBACK_FILE_MAX_AGE_MS, LIMITS } from '@shared/constants';
 import { PRESETS, dateStampText, seedFrom } from '@shared/presets';
 import { shotsRemaining } from '@shared/rolls';
 import type { GroupDoc, RollDoc } from '@shared/types';
@@ -125,7 +125,6 @@ function Camera({ roll, group }: { roll: RollDoc; group: GroupDoc }) {
   const { profile } = useAuth();
   const video = useRef<HTMLVideoElement>(null);
   const stream = useRef<MediaStream | null>(null);
-  const galleryInput = useRef<HTMLInputElement>(null);
   const nativeInput = useRef<HTMLInputElement>(null);
 
   const [stage, setStage] = useState<Stage>('camera');
@@ -253,13 +252,17 @@ function Camera({ roll, group }: { roll: RollDoc; group: GroupDoc }) {
     acceptImage(await createImageBitmap(c), Date.now());
   }
 
-  async function pickFile(f: File | undefined) {
+  /** Phone-camera fallback (when the in-app camera can't open). Only brand-new shots are accepted. */
+  async function fromPhoneCamera(f: File | undefined) {
     if (!f) return;
-    if (!f.type.startsWith('image/') && f.type !== '') return toast('Choose a photo.', 'error');
+    if (!f.type.startsWith('image/') && f.type !== '') return toast('That isn’t a photo.', 'error');
+    const age = Date.now() - f.lastModified;
+    if (!f.lastModified || age > FALLBACK_FILE_MAX_AGE_MS || age < -60_000) {
+      return toast('FilmRoll only takes photos shot just now — no old ones from your library.', 'error');
+    }
     try {
       const b = await decode(f);
-      const age = Date.now() - f.lastModified;
-      acceptImage(b, f.lastModified && age >= 0 && age < 365 * 864e5 ? f.lastModified : Date.now());
+      acceptImage(b, Date.now());
     } catch (e) {
       toast(errorMessage(e), 'error');
     }
@@ -375,7 +378,8 @@ function Camera({ roll, group }: { roll: RollDoc; group: GroupDoc }) {
             </div>
 
             <div className="flex items-center justify-around px-8 pb-safe pt-2">
-              <IconButton label="Choose from your photos" onClick={() => galleryInput.current?.click()} className="size-14 bg-white/10 text-cream active:bg-white/20"><ImagePlus className="size-6" /></IconButton>
+              {/* no gallery: only fresh shots go on the roll */}
+              <span className="size-14" aria-hidden />
               <button
                 onClick={camState === 'live' ? shoot : () => nativeInput.current?.click()}
                 aria-label="Take photo"
@@ -400,7 +404,6 @@ function Camera({ roll, group }: { roll: RollDoc; group: GroupDoc }) {
               {stage === 'confirm' && (
                 <div className="flex justify-center gap-2">
                   <Button size="sm" variant="ghost" className="!text-cream" icon={<RefreshCcw className="size-4" />} onClick={() => { bitmap?.close(); setBitmap(null); setStage('camera'); }}>Retake</Button>
-                  <Button size="sm" variant="ghost" className="!text-cream" icon={<ImagePlus className="size-4" />} onClick={() => galleryInput.current?.click()}>Replace</Button>
                 </div>
               )}
               <TextArea value={caption} onChange={(e) => setCaption(e.target.value.slice(0, LIMITS.caption))} rows={2} placeholder="Add a caption (optional)" aria-label="Caption" disabled={stage === 'submitting'} className="!border-white/10 !bg-white/10 !text-cream placeholder:!text-cream/40" />
@@ -461,8 +464,7 @@ function Camera({ roll, group }: { roll: RollDoc; group: GroupDoc }) {
       </AnimatePresence>
 
       <AnimatePresence>{screenFlash && <motion.div className="fixed inset-0 z-50 bg-white" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.08 }} />}</AnimatePresence>
-      <input ref={galleryInput} type="file" accept="image/*" className="hidden" onChange={(e) => { void pickFile(e.target.files?.[0]); e.target.value = ''; }} />
-      <input ref={nativeInput} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => { void pickFile(e.target.files?.[0]); e.target.value = ''; }} />
+      <input ref={nativeInput} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => { void fromPhoneCamera(e.target.files?.[0]); e.target.value = ''; }} />
     </main>
   );
 }

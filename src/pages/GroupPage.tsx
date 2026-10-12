@@ -140,10 +140,11 @@ export default function GroupPage() {
 
   return (
     <div>
-      <div style={{ background: t.bg, color: t.fg }} className="rounded-b-[32px]">
-        <PageHeader
+      <PageHeader
           back="/"
-          title={<span style={{ color: t.fg }}>{group.name}</span>}
+          background={t.bg}
+          color={t.fg}
+          title={group.name}
           right={
             <>
               <IconButton label="Invite friends" onClick={() => setInviting(true)} style={{ color: t.fg }}><UserPlus className="size-6" /></IconButton>
@@ -151,6 +152,7 @@ export default function GroupPage() {
             </>
           }
         />
+      <div style={{ background: t.bg, color: t.fg }} className="-mt-px rounded-b-[32px]">
         <div className="px-5 pb-6">
           <button onClick={() => nav(`/g/${group.id}/settings`)} className="flex items-center gap-3 text-left" aria-label="See members">
             <div className="flex">

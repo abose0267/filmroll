@@ -150,11 +150,11 @@ try {
   await shot(alice.page, '08-captured');
   log(await alice.page.getByText(/11 exposures left/).isVisible(), 'exposure counter shows 11 left');
 
-  // more shots from the gallery
+  // more shots through the phone-camera fallback input (fresh files)
   const photos = await makePhotos(alice.page, 11);
   for (let i = 0; i < 5; i++) {
     await alice.page.getByRole('button', { name: 'Take another' }).click();
-    await alice.page.locator('input[type=file]:not([capture])').setInputFiles(photos[i]);
+    await alice.page.locator('input[type=file][capture]').setInputFiles(photos[i]);
     await confirmShot(alice.page, `Alice frame ${i + 2}`);
   }
   log(true, 'alice added 6 photos');
@@ -175,11 +175,11 @@ try {
   // leave the album page, otherwise the reveal plays live in this tab when the roll develops
   await alice.page.goto(`${BASE}/g/${gid}`);
 
-  console.log('Bob shoots the last 6 from his gallery');
+  console.log('Bob shoots the last 6 (phone-camera fallback input)');
   await bob.page.goto(`${BASE}/camera?g=${gid}`);
   for (let i = 0; i < 6; i++) {
     if (i > 0) await bob.page.getByRole('button', { name: 'Take another' }).click();
-    await bob.page.locator('input[type=file]:not([capture])').setInputFiles(photos[5 + i] ?? photos[0]);
+    await bob.page.locator('input[type=file][capture]').setInputFiles(photos[5 + i] ?? photos[0]);
     await confirmShot(bob.page, `Bob frame ${i + 1}`);
   }
   await bob.page.getByText(/last shot/).waitFor();
