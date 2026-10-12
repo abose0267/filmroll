@@ -32,3 +32,13 @@ describe('camera orientation', () => {
     expect(cropToAspect(1440, 1920, 3 / 4)).toEqual({ sx: 0, sy: 0, sw: 1440, sh: 1920 });
   });
 });
+
+import { initials } from './format';
+describe('initials', () => {
+  it('uses letters only', () => {
+    expect(initials('Arka (admin)')).toBe('AA');
+    expect(initials('alice')).toBe('A');
+    expect(initials('  ')).toBe('?');
+    expect(initials('🎉 Party Crew')).toBe('PC');
+  });
+});

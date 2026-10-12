@@ -40,8 +40,10 @@ export function dateRange(a: number | null, b: number | null): string {
   return `${formatDate(a)} – ${formatDate(b)}`;
 }
 
+/** First letter of up to two words, ignoring punctuation and emoji ("Arka (admin)" → "AA"). */
 export function initials(name: string): string {
-  return name.split(/\s+/).filter(Boolean).slice(0, 2).map((s) => s[0]!.toUpperCase()).join('') || '?';
+  const letters = name.split(/\s+/).map((w) => w.match(/\p{L}|\p{N}/u)?.[0]).filter((c): c is string => !!c);
+  return letters.slice(0, 2).join('').toUpperCase() || '?';
 }
 
 export function randomRequestId(): string {

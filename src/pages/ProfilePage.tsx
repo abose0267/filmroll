@@ -84,6 +84,13 @@ export default function ProfilePage() {
         </div>
         {profile.bio && <p className="rounded-2xl bg-cream/60 px-4 py-3 text-[15px]">{profile.bio}</p>}
 
+        {/* owner-only: shown when the server confirms this account is an admin */}
+        {admin && (
+          <Link to="/admin" className="flex h-14 w-full items-center justify-center gap-2 rounded-full bg-ink font-semibold text-cream shadow-soft transition active:scale-[0.98]">
+            <BarChart3 className="size-5" /> Analytics
+          </Link>
+        )}
+
         <Section title="Your groups">
           {groups.length === 0 ? (
             <p className="py-4 text-sm text-ink-soft">You’re not in any groups yet.</p>
@@ -128,7 +135,6 @@ export default function ProfilePage() {
           <div className="divide-y divide-line">
             <Link to="/about" className="flex items-center gap-3 py-3 font-semibold"><Info className="size-5" /> <span className="flex-1">About FilmRoll</span><ChevronRight className="size-5 text-ink-faint" /></Link>
             <button className="flex w-full items-center gap-3 py-3 text-left font-semibold" onClick={() => setTutorial(true)}><PlayCircle className="size-5" /> <span className="flex-1">How FilmRoll works</span><ChevronRight className="size-5 text-ink-faint" /></button>
-            {admin && <Link to="/admin" className="flex items-center gap-3 py-3 font-semibold"><BarChart3 className="size-5" /> <span className="flex-1">Analytics</span><ChevronRight className="size-5 text-ink-faint" /></Link>}
           </div>
         </Section>
 
