@@ -108,6 +108,7 @@ for (let i = 0; i < 9; i++) {
   await p.locator('input[type=file][capture]').setInputFiles({ name: `s${i}.jpg`, mimeType: 'image/jpeg', buffer: Buffer.from(files[i]) });
   await done(`Mixed ${i}`);
 }
+await p.waitForFunction(() => !document.querySelector('[aria-label*="saving"]'), null, { timeout: 60000 });
 log(true, 'roll filled with mixed orientations');
 
 // album

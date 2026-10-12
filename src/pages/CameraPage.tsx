@@ -155,9 +155,19 @@ function Camera({ roll, group }: { roll: RollDoc; group: GroupDoc }) {
   const [undoLeft, setUndoLeft] = useState(0);
   const [caption, setCaption] = useState('');
   const [location, setLocation] = useState('');
-  const [saving, setSaving] = useState(false);
+  // Shots that are saving in the background after Done (the user doesn't wait for them).
+  const [pendingSaves, setPendingSaves] = useState(0);
 
-  const remaining = shotsRemaining(roll);
+  // Closing/reloading the page mid-save would lose that shot: ask the browser to warn.
+  useEffect(() => {
+    if (!pendingSaves) return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    addEventListener('beforeunload', warn);
+    return () => removeEventListener('beforeunload', warn);
+  }, [pendingSaves]);
+
+  // Count shots still saving as used, so the counter is right immediately.
+  const remaining = Math.max(0, shotsRemaining(roll) - pendingSaves);
 
   // Orientation: if the browser rotates the UI we switch to a side-by-side layout;
   // if the UI stays portrait (installed app, rotation lock) the tilt sensor tells us
@@ -246,7 +256,7 @@ function Camera({ roll, group }: { roll: RollDoc; group: GroupDoc }) {
   function begin(b: ImageBitmap, at: number) {
     setWound(false);
     setFrameShape(b.width > b.height ? 'landscape' : 'portrait');
-    setFrameNo(roll.exposuresUsed + 1);
+    setFrameNo(roll.exposuresUsed + pendingSaves + 1);
     setCaption('');
     setLocation('');
     const s = new Shot({ groupId: roll.groupId, rollId: roll.id, preset: roll.preset, dateStamp: roll.dateStamp, seed: seedFrom(randomRequestId()), capturedAt: at, source: b, onChange: setSnap });
@@ -326,25 +336,48 @@ function Camera({ roll, group }: { roll: RollDoc; group: GroupDoc }) {
     toast('Shot discarded — the exposure is back.');
   }
 
-  async function done() {
+  /** Finish saving a shot in the background, retrying a couple of times before telling the user. */
+  function saveInBackground(s: Shot) {
+    setPendingSaves((n) => n + 1);
+    let counted = true;
+    const uncount = () => {
+      if (counted) setPendingSaves((n) => n - 1);
+      counted = false;
+    };
+    (async () => {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (attempt) {
+          await new Promise((r) => setTimeout(r, 1500 * attempt));
+          s.retry();
+        }
+        await s.commit();
+        const snap = s.snapshot;
+        if (snap.state === 'saved') {
+          uncount(); // the roll itself now counts this shot
+          await s.saveNote().catch((e) => toast(`Your shot is saved, but its note wasn’t: ${errorMessage(e)}`, 'error'));
+          return;
+        }
+        if (snap.state !== 'failed' || snap.lost) break;
+      }
+      const snap = s.snapshot;
+      if (snap.state === 'failed') toast(snap.lost ? 'Someone took the last exposure first, so your latest shot didn’t make it onto the roll.' : `A shot couldn’t be saved: ${snap.error ?? 'check your connection.'}`, 'error');
+    })().finally(uncount);
+  }
+
+  /** Done never waits: the shot keeps saving in the background while you carry on. */
+  function done() {
     const s = shot.current;
     if (!s) return;
-    setSaving(true);
-    try {
-      s.setNote(caption.trim(), location.trim());
-      setUndoLeft(0);
-      await s.commit();
-      if (s.snapshot.state !== 'saved') return; // failed: the panel shows why
-      await s.saveNote().catch((e) => toast(`Your shot is saved, but the note wasn’t: ${errorMessage(e)}`, 'error'));
-      const left = s.snapshot.remaining ?? remaining - 1;
-      shot.current = null;
-      if (left <= 0 || (s.snapshot.rollStatus && s.snapshot.rollStatus !== 'active')) setStage('last');
-      else {
-        setStage('camera');
-        toast(left <= 8 ? `${SAVED[frameNo % SAVED.length]} Only ${left} left.` : SAVED[frameNo % SAVED.length]);
-      }
-    } finally {
-      setSaving(false);
+    s.setNote(caption.trim(), location.trim());
+    setUndoLeft(0);
+    shot.current = null;
+    setSnap(null);
+    saveInBackground(s);
+    const left = remaining - 1;
+    if (left <= 0) setStage('last');
+    else {
+      setStage('camera');
+      toast(left <= 8 ? `${SAVED[frameNo % SAVED.length]} Only ${left} left.` : SAVED[frameNo % SAVED.length]);
     }
   }
 
@@ -367,8 +400,9 @@ function Camera({ roll, group }: { roll: RollDoc; group: GroupDoc }) {
           <p className="truncate text-sm font-semibold">{group.name}</p>
           <p className="truncate text-xs text-cream/60">{roll.name} · <span className="font-mono">{PRESETS[roll.preset].code}</span></p>
         </div>
-        <div className="grid h-9 min-w-14 place-items-center rounded-lg bg-black px-2 font-mono text-lg text-amber shadow-inner" style={turn} aria-label={`${remaining} exposures left`}>
+        <div className="relative grid h-9 min-w-14 place-items-center rounded-lg bg-black px-2 font-mono text-lg text-amber shadow-inner" style={turn} aria-label={`${remaining} exposures left${pendingSaves ? `, saving ${pendingSaves}` : ''}`}>
           {String(remaining).padStart(2, '0')}
+          {pendingSaves > 0 && <span className="absolute -right-1 -top-1 size-2.5 animate-pulse rounded-full bg-coral ring-2 ring-body" title="Saving in the background" />}
         </div>
       </div>
 
@@ -492,7 +526,7 @@ function Camera({ roll, group }: { roll: RollDoc; group: GroupDoc }) {
               ) : status === 'failed' ? (
                 <Button size="lg" className="w-full" onClick={() => { shot.current?.retry(); void shot.current?.commit(); }}>Try again</Button>
               ) : (
-                <Button size="lg" className="w-full" loading={saving} onClick={done}>Done</Button>
+                <Button size="lg" className="w-full" onClick={done}>Done</Button>
               )}
               <p className="pb-4 text-center text-xs text-cream/50">No peeking — this shot stays undeveloped until the whole roll does.</p>
             </div>

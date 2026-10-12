@@ -13,7 +13,7 @@ export const MEMBER_PREVIEW_SIZE = 8;
 /** How long a reserved exposure waits for its upload to be finalized. */
 export const RESERVATION_TTL_MS = 15 * 60 * 1000;
 /** A user may hold at most this many pending reservations per roll. */
-export const MAX_PENDING_PER_USER = 2;
+export const MAX_PENDING_PER_USER = 4; // shots can keep saving in the background while you carry on
 /**
  * After a scheduled roll's date passes it enters `developing` and waits for
  * in-flight uploads (at most one reservation TTL) before revealing.
@@ -49,8 +49,9 @@ export const LIMITS = {
   inputBytes: 40 * 1024 * 1024,
 } as const;
 
-export const ORIGINAL_MAX_DIMENSION = 4096;
-export const DISPLAY_MAX_DIMENSION = 2048;
+/** Plenty for phone screens and 6×4" prints, and ~half the upload of 4096px @95%. */
+export const ORIGINAL_MAX_DIMENSION = 3072;
+export const DISPLAY_MAX_DIMENSION = 1600;
 export const THUMB_MAX_DIMENSION = 480;
 
 export const REACTIONS: ReactionEmoji[] = ['❤️', '😂', '🥹', '📸'];

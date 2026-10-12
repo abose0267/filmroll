@@ -141,7 +141,7 @@ export default function GroupPage() {
 
   return (
     <div>
-      <div style={{ background: t.bg, color: t.fg }} className="rounded-b-[32px]">
+      <div style={{ background: t.bg, color: t.fg }} className="overflow-visible rounded-b-[32px]">
       <PageHeader
           back="/"
           background={t.bg}
@@ -154,10 +154,15 @@ export default function GroupPage() {
             </>
           }
         />
-        <div className="px-5 pb-6">
-          <button onClick={() => nav(`/g/${group.id}/settings`)} className="flex items-center gap-3 text-left" aria-label="See members">
-            <div className="flex">
-              {members.slice(0, 6).map((m, i) => <span key={m.uid} style={{ marginLeft: i ? -8 : 0 }}><Avatar name={m.displayName} url={m.photoURL} size={32} /></span>)}
+        {/* member row: its own vertical room below the title row; nothing above it clips */}
+        <div className="px-5 pb-6 pt-2">
+          <button onClick={() => nav(`/g/${group.id}/settings`)} className="flex min-h-11 items-center gap-3 overflow-visible text-left" aria-label="See members">
+            <div className="flex items-center py-0.5">
+              {members.slice(0, 6).map((m, i, all) => (
+                <div key={m.uid} className="shrink-0" style={{ marginLeft: i ? -8 : 0, zIndex: all.length - i }}>
+                  <Avatar name={m.displayName} url={m.photoURL} size={34} />
+                </div>
+              ))}
             </div>
             <span className="text-sm opacity-80">{group.memberCount} {group.memberCount === 1 ? 'member' : 'members'}</span>
           </button>

@@ -85,7 +85,9 @@ export function Avatar({ name, url, size = 36, className }: { name: string; url?
   const hue = Array.from(name).reduce((h, c) => h + c.charCodeAt(0), 0) % 5;
   const bg = ['#E9826A', '#E2A548', '#A9B79A', '#8C7FA8', '#C79A7A'][hue];
   return (
-    <span className={cx('inline-grid shrink-0 place-items-center overflow-hidden rounded-full font-semibold text-cream ring-2 ring-cream', className)} style={{ width: size, height: size, background: bg, fontSize: size * 0.38 }} aria-label={name} role="img">
+    // The white edge is a real border inside the avatar's own box (not an outer ring),
+    // so neighbouring elements can never paint over it on iOS.
+    <span className={cx('box-border grid shrink-0 place-items-center overflow-hidden rounded-full border-2 border-cream font-semibold text-cream', className)} style={{ width: size, height: size, background: bg, fontSize: size * 0.36 }} aria-label={name} role="img">
       {url && !broken ? <img src={url} alt="" referrerPolicy="no-referrer" className="size-full object-cover" onError={() => setBroken(true)} /> : initials(name)}
     </span>
   );
@@ -97,12 +99,12 @@ export function AvatarStack({ people, size = 30, max = 5 }: { people: { name: st
   return (
     <div className="flex items-center">
       {shown.map((p, i) => (
-        <span key={p.uid ?? i} style={{ marginLeft: i ? -size * 0.3 : 0 }}>
+        <div key={p.uid ?? i} className="shrink-0" style={{ marginLeft: i ? -size * 0.3 : 0, zIndex: shown.length - i }}>
           <Avatar name={p.name} url={p.photoURL} size={size} />
-        </span>
+        </div>
       ))}
       {more > 0 && (
-        <span className="grid place-items-center rounded-full bg-paper-2 text-xs font-semibold text-ink-soft ring-2 ring-cream" style={{ width: size, height: size, marginLeft: -size * 0.3 }}>
+        <span className="box-border grid shrink-0 place-items-center rounded-full border-2 border-cream bg-paper-2 text-xs font-semibold text-ink-soft" style={{ width: size, height: size, marginLeft: -size * 0.3 }}>
           +{more}
         </span>
       )}

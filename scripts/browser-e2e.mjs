@@ -96,6 +96,11 @@ async function noteAndDone(page, caption) {
   await page.getByRole('button', { name: /^Take photo/ }).or(page.getByText('That’s the whole roll!')).waitFor({ timeout: 30000 });
 }
 
+/** Wait until no shots are still saving in the background (counter's "saving" mark gone). */
+async function savesSettled(page) {
+  await page.waitForFunction(() => !document.querySelector('[aria-label*="saving"]'), null, { timeout: 60000 });
+}
+
 /** Wind, then take a shot through the phone-camera fallback input. */
 async function shootFile(page, file, caption) {
   await wind(page);
@@ -188,7 +193,8 @@ try {
   // more shots through the phone-camera fallback input (fresh files)
   const photos = await makePhotos(alice.page, 11);
   for (let i = 0; i < 5; i++) await shootFile(alice.page, photos[i], `Alice frame ${i + 2}`);
-  log(true, 'alice added 6 photos');
+  await savesSettled(alice.page);
+  log(true, 'alice added 6 photos (Done returned to the camera immediately; saves finished in the background)');
 
   console.log('Before development, nothing is visible');
   await alice.page.goto(`${BASE}/g/${gid}`);
@@ -210,6 +216,7 @@ try {
   await bob.page.goto(`${BASE}/camera?g=${gid}`);
   for (let i = 0; i < 6; i++) await shootFile(bob.page, photos[5 + i] ?? photos[0], `Bob frame ${i + 1}`);
   await bob.page.getByText(/last shot/).waitFor();
+  await savesSettled(bob.page);
   await shot(bob.page, '10-last-shot');
   log(true, 'roll filled and sent to develop');
 

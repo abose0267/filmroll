@@ -68,36 +68,49 @@ export class Shot {
 
   private async run() {
     this.set({ state: 'working', error: null });
+    const t0 = performance.now();
+    // Reserve the exposure while the photo is still being processed.
+    const reserving = this.reservation ? Promise.resolve(this.reservation) : api.reserveExposure({ groupId: this.o.groupId, rollId: this.o.rollId, requestId: this.requestId });
+    reserving.catch(() => undefined); // surfaced below
     if (!this.processed) {
       this.processed = await processPhoto(this.o.source, { preset: this.o.preset, seed: this.o.seed, dateStamp: this.o.dateStamp, capturedAt: this.o.capturedAt });
       this.o.source.close(); // the original pixels are no longer needed; nobody sees the shot until it develops
     }
-    if (this.isCancelled()) return;
-    this.reservation ??= await api.reserveExposure({ groupId: this.o.groupId, rollId: this.o.rollId, requestId: this.requestId });
+    const t1 = performance.now();
+    this.reservation = await reserving;
+    const t2 = performance.now();
     if (this.isCancelled()) return this.release();
-    const parts = [['original', this.processed.original.blob], ['display', this.processed.display.blob], ['thumb', this.processed.thumb.blob]] as const;
+    const prefix = this.reservation.uploadPrefix;
+    const parts = [['thumb', this.processed.thumb.blob], ['display', this.processed.display.blob], ['original', this.processed.original.blob]] as const;
     const total = parts.reduce((s, [, b]) => s + b.size, 0);
     const sent: Record<string, number> = {};
-    for (const [name, blob] of parts) {
+    // All three files upload in parallel, each with its own retries.
+    await Promise.all(parts.map(async ([name, blob]) => {
       for (let tries = 0; ; tries++) {
         try {
-          const task = uploadBytesResumable(ref(storage, this.reservation.uploadPrefix + name), blob, { contentType: 'image/jpeg', cacheControl: 'private, no-store' });
+          const task = uploadBytesResumable(ref(storage, prefix + name), blob, { contentType: 'image/jpeg', cacheControl: 'private, no-store' });
           this.tasks.push(task);
           task.on('state_changed', (s) => {
             sent[name] = s.bytesTransferred;
             this.set({ progress: Object.values(sent).reduce((a, b) => a + b, 0) / total });
           });
           await task;
-          break;
+          return;
         } catch (e) {
           if (this.isCancelled()) return;
           if (tries >= 2 || errorCode(e) === 'storage/unauthorized') throw e;
           await new Promise((r) => setTimeout(r, 1000 * (tries + 1)));
         }
       }
-    }
-    if (!this.isCancelled()) this.set({ state: 'uploaded', progress: 1 });
+    }));
+    if (this.isCancelled()) return;
+    this.set({ state: 'uploaded', progress: 1 });
+    this.timings = { process: t1 - t0, reserveWait: t2 - t1, upload: performance.now() - t2, bytes: total };
+    if (import.meta.env.DEV) console.debug('[shot] pipeline', this.timings);
   }
+
+  /** Step durations (ms) for diagnosing slow saves. */
+  timings: Record<string, number> = {};
 
   private isCancelled() {
     return this.snap.state === 'cancelled';
@@ -150,11 +163,14 @@ export class Shot {
       const p = this.processed!;
       const size = (k: keyof ProcessedPhoto) => ({ width: p[k].width, height: p[k].height });
       try {
+        const tf = performance.now();
         const out = await api.finalizeExposure({
           groupId: this.o.groupId, rollId: this.o.rollId, reservationId: this.reservation!.reservationId,
           caption: this.note.caption, location: this.note.location, capturedAt: this.o.capturedAt, clientNow: Date.now(), preset: this.o.preset,
           sizes: { original: size('original'), display: size('display'), thumb: size('thumb') },
         });
+        this.timings.finalize = performance.now() - tf;
+        if (import.meta.env.DEV) console.debug('[shot] saved', this.timings);
         this.savedNote = { ...this.note };
         this.processed = null; // drop every local copy of the hidden photo
         this.set({ state: 'saved', photoId: out.photoId, remaining: out.remaining, rollStatus: out.status });

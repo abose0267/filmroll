@@ -25,6 +25,8 @@ import { cleanText, sniffImage } from '@shared/validation';
 import type { PhotoDoc, PhotoVariantInfo, ReservationDoc, RollDoc } from '@shared/types';
 
 const opts = { region: REGION };
+/** The hot path of every shot: a full vCPU (default is a fraction) keeps it snappy. */
+const shotOpts = { region: REGION, memory: '512MiB' as const, cpu: 1 };
 const VARIANTS = ['original', 'display', 'thumb'] as const;
 type Variant = (typeof VARIANTS)[number];
 const MAX_BYTES: Record<Variant, number> = { original: LIMITS.originalBytes, display: LIMITS.displayBytes, thumb: LIMITS.thumbBytes };
@@ -32,7 +34,7 @@ const MAX_BYTES: Record<Variant, number> = { original: LIMITS.originalBytes, dis
 export const uploadPath = (uid: string, resId: string, v: Variant) => `uploads/${uid}/${resId}/${v}`;
 export const photoPath = (gid: string, rid: string, pid: string, v: Variant) => `photos/${gid}/${rid}/${pid}/${v}`;
 
-export const reserveExposure = onCall(opts, async (req) => {
+export const reserveExposure = onCall(shotOpts, async (req) => {
   const uid = requireAuth(req);
   const { gid } = await requireMember(req.data?.groupId, uid);
   const rid = docId(req.data?.rollId, 'roll');
@@ -115,7 +117,7 @@ function dims(v: unknown): { width: number; height: number } {
   return { width: w, height: h };
 }
 
-export const finalizeExposure = onCall(opts, async (req) => {
+export const finalizeExposure = onCall(shotOpts, async (req) => {
   const uid = requireAuth(req);
   const { gid } = await requireMember(req.data?.groupId, uid);
   const rid = docId(req.data?.rollId, 'roll');
@@ -141,21 +143,20 @@ export const finalizeExposure = onCall(opts, async (req) => {
   if (res.status === 'finalized') return { photoId: res.photoId, duplicate: true, ...(await afterInfo(gid, rid)) };
   if (res.status === 'expired') throw new HttpsError('deadline-exceeded', 'That upload took too long and the exposure was released. Try again.');
 
-  const roll0 = (await rollRef(gid, rid).get()).data() as RollDoc;
+  // Check all three uploads at once (size, type, file signature).
+  const [roll0Snap, ...metas] = await Promise.all([rollRef(gid, rid).get(), ...VARIANTS.map((v) => inspect(uploadPath(uid, resId, v), v))]);
+  const roll0 = roll0Snap.data() as RollDoc;
   const info = {} as Record<Variant, PhotoVariantInfo>;
-  for (const v of VARIANTS) {
-    const meta = await inspect(uploadPath(uid, resId, v), v);
-    info[v] = { path: '', ...sizes[v], ...meta };
-  }
+  VARIANTS.forEach((v, i) => (info[v] = { path: '', ...sizes[v], ...metas[i] }));
 
-  // Move into the private photo area before committing (copies are cheap; on failure we clean up).
+  // Move into the private photo area before committing (in parallel; on failure we clean up).
   const pid = newId();
-  for (const v of VARIANTS) {
+  await Promise.all(VARIANTS.map(async (v) => {
     const dest = photoPath(gid, rid, pid, v);
     await bucket().file(uploadPath(uid, resId, v)).copy(bucket().file(dest));
     await bucket().file(dest).setMetadata({ contentType: info[v].contentType, cacheControl: 'private, max-age=0, no-store', metadata: { groupId: gid, rollId: rid, uid } });
     info[v].path = dest;
-  }
+  }));
 
   const preset = isPresetId(req.data?.preset) ? req.data.preset : roll0.preset;
   let outcome: { roll: RollDoc } | { error: HttpsError };
@@ -186,21 +187,23 @@ export const finalizeExposure = onCall(opts, async (req) => {
     await expireReservation(gid, rid, resId);
     throw outcome.error;
   }
-  await bucket().deleteFiles({ prefix: `uploads/${uid}/${resId}/` }).catch(() => undefined);
-
   const roll = outcome.roll;
   const milestones = newMilestones(roll);
-  if (milestones.length) {
+  const sendMilestones = async () => {
+    if (!milestones.length) return;
     await rollRef(gid, rid).update({ milestones: FieldValue.arrayUnion(...milestones) });
     const ids = await memberIds(gid);
     const left = roll.capacity - roll.exposuresUsed;
-    for (const m of milestones) {
-      await notify(ids, m === 'half'
-        ? { kind: 'halfway', title: `${roll.name} is halfway full`, body: `${roll.exposuresUsed} of ${roll.capacity} memories captured.`, groupId: gid, rollId: rid, link: `/g/${gid}` }
-        : { kind: 'fewLeft', title: `Only ${left} exposures remain`, body: `on ${roll.name}. Make them count.`, groupId: gid, rollId: rid, link: `/g/${gid}` });
-    }
-  }
-  await advanceRoll(gid, rid);
+    await Promise.all(milestones.map((m) => notify(ids, m === 'half'
+      ? { kind: 'halfway', title: `${roll.name} is halfway full`, body: `${roll.exposuresUsed} of ${roll.capacity} memories captured.`, groupId: gid, rollId: rid, link: `/g/${gid}` }
+      : { kind: 'fewLeft', title: `Only ${left} exposures remain`, body: `on ${roll.name}. Make them count.`, groupId: gid, rollId: rid, link: `/g/${gid}` })));
+  };
+  // Clean-up, milestone notifications and the develop check are independent: run them together.
+  await Promise.all([
+    bucket().deleteFiles({ prefix: `uploads/${uid}/${resId}/` }).catch(() => undefined),
+    sendMilestones().catch((e) => console.warn('milestones', e)),
+    advanceRoll(gid, rid),
+  ]);
   return { photoId: pid, duplicate: false, ...(await afterInfo(gid, rid)) };
 });
 

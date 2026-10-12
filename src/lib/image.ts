@@ -1,8 +1,8 @@
 /**
  * Client-side photo processing: decode with EXIF orientation, produce
- * - original: full-resolution (≤4096px) high-quality JPEG; re-encoding strips
- *   EXIF metadata such as precise GPS before anything leaves the phone,
- * - display: film-processed ≤2048px JPEG,
+ * - original: ≤3072px high-quality JPEG; re-encoding strips EXIF metadata such
+ *   as precise GPS before anything leaves the phone,
+ * - display: film-processed ≤1600px JPEG,
  * - thumb: film-processed ≤480px JPEG for contact sheets.
  */
 import { DISPLAY_MAX_DIMENSION, LIMITS, ORIGINAL_MAX_DIMENSION, THUMB_MAX_DIMENSION } from '@shared/constants';
@@ -88,20 +88,29 @@ export async function filmCanvas(src: HTMLCanvasElement, preset: PresetId, seed:
 export interface ProcessOptions { preset: PresetId; seed: number; dateStamp: boolean; capturedAt: number }
 
 export async function processPhoto(bitmap: ImageBitmap, o: ProcessOptions): Promise<ProcessedPhoto> {
+  // Encode the original while the film look is applied (worker) — they don't depend on each other.
   const orig = drawScaled(bitmap, ORIGINAL_MAX_DIMENSION);
-  let q = 0.95;
-  let originalBlob = await toBlob(orig, q);
-  while (originalBlob.size > LIMITS.originalBytes && q > 0.7) originalBlob = await toBlob(orig, (q -= 0.08));
+  const originalP = (async () => {
+    let q = 0.9;
+    let b = await toBlob(orig, q);
+    while (b.size > LIMITS.originalBytes && q > 0.7) b = await toBlob(orig, (q -= 0.08));
+    return b;
+  })();
 
   const disp = await filmCanvas(drawScaled(bitmap, DISPLAY_MAX_DIMENSION), o.preset, o.seed);
   if (o.dateStamp) drawDateStamp(disp, o.capturedAt);
-  const displayBlob = await toBlob(disp, 0.9);
-
   // Thumb from the processed display version so grain/stamp match.
   const th = drawScaled(disp, THUMB_MAX_DIMENSION);
-  let tq = 0.82;
-  let thumbBlob = await toBlob(th, tq);
-  while (thumbBlob.size > LIMITS.thumbBytes && tq > 0.5) thumbBlob = await toBlob(th, (tq -= 0.1));
+  const [displayBlob, thumbBlob, originalBlob] = await Promise.all([
+    toBlob(disp, 0.86),
+    (async () => {
+      let tq = 0.82;
+      let b = await toBlob(th, tq);
+      while (b.size > LIMITS.thumbBytes && tq > 0.5) b = await toBlob(th, (tq -= 0.1));
+      return b;
+    })(),
+    originalP,
+  ]);
 
   return {
     original: { blob: originalBlob, width: orig.width, height: orig.height },
