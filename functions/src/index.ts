@@ -9,3 +9,4 @@ export { sweepRolls } from './sweep';
 export { photo } from './photo';
 export { onCommentCreated } from './comments';
 export { deleteAccount } from './account';
+export { amIAdmin, getAnalytics } from './analytics';

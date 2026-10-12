@@ -17,3 +17,7 @@ node_modules.nosync
 functions/node_modules.nosync
 e2e-screens
 *.tsbuildinfo
+
+# server-only config (e.g. ADMIN_EMAILS) — never commit real values
+functions/.env.*
+!functions/.env.demo-filmroll

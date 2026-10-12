@@ -119,6 +119,9 @@ describe('no client manipulation of trusted state', () => {
     await assertSucceeds(setDoc(doc(as('dan'), 'users', 'dan'), good));
     await assertFails(setDoc(doc(as('fay'), 'users', 'fay'), { ...good, uid: 'fay', groupIds: [G] }));
     await assertFails(setDoc(doc(as('gus'), 'users', 'gus'), { ...good, uid: 'gus', displayName: '' }));
+    // camera + tutorial preferences
+    await assertSucceeds(updateDoc(doc(as('dan'), 'users', 'dan'), { windToShoot: false, tutorialDone: true }));
+    await assertFails(updateDoc(doc(as('dan'), 'users', 'dan'), { windToShoot: 'nope' }));
   });
 });
 

@@ -1,7 +1,7 @@
-import { useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { doc, updateDoc } from 'firebase/firestore';
-import { Camera, ChevronRight, LogOut } from 'lucide-react';
+import { BarChart3, Camera, ChevronRight, Info, LogOut, PlayCircle } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useMyGroups } from '@/hooks/useData';
 import { Avatar, Button, Field, PageHeader, Sheet, TextArea, TextInput, Toggle, useToast } from '@/components/ui';
@@ -13,6 +13,8 @@ import { cleanText, displayNameError } from '@shared/validation';
 import type { NotificationPrefs } from '@shared/types';
 import { uploadAvatar } from './OnboardingPage';
 import { themeOf } from './HomePage';
+
+const Tutorial = lazy(() => import('@/components/Tutorial'));
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -42,6 +44,12 @@ export default function ProfilePage() {
   const [deleting, setDeleting] = useState(false);
   const [confirm, setConfirm] = useState('');
   const file = useRef<HTMLInputElement>(null);
+  const [tutorial, setTutorial] = useState(false);
+  const [admin, setAdmin] = useState(false);
+  // The server decides who's an admin; the link only appears if it says yes.
+  useEffect(() => {
+    api.amIAdmin({}).then((r) => setAdmin(r.admin), () => setAdmin(false));
+  }, []);
   if (!user || !profile) return null;
   const prefs = { ...DEFAULT_NOTIFICATION_PREFS, ...profile.notificationPrefs };
 
@@ -103,8 +111,25 @@ export default function ProfilePage() {
           </div>
         </Section>
 
+        <Section title="Camera">
+          <Toggle
+            label="Wind the film before each shot"
+            description="Like a real disposable: turn the wheel to unlock the shutter. Off = the shutter is always ready."
+            checked={profile.windToShoot !== false}
+            onChange={(v) => save({ windToShoot: v })}
+          />
+        </Section>
+
         <Section title="Memories">
           <Toggle label="Resurface old rolls" description="Show “one year ago” moments in Albums." checked={profile.showMemories} onChange={(v) => save({ showMemories: v, notificationPrefs: { ...prefs, memories: v } })} />
+        </Section>
+
+        <Section title="FilmRoll">
+          <div className="divide-y divide-line">
+            <Link to="/about" className="flex items-center gap-3 py-3 font-semibold"><Info className="size-5" /> <span className="flex-1">About FilmRoll</span><ChevronRight className="size-5 text-ink-faint" /></Link>
+            <button className="flex w-full items-center gap-3 py-3 text-left font-semibold" onClick={() => setTutorial(true)}><PlayCircle className="size-5" /> <span className="flex-1">How FilmRoll works</span><ChevronRight className="size-5 text-ink-faint" /></button>
+            {admin && <Link to="/admin" className="flex items-center gap-3 py-3 font-semibold"><BarChart3 className="size-5" /> <span className="flex-1">Analytics</span><ChevronRight className="size-5 text-ink-faint" /></Link>}
+          </div>
         </Section>
 
         <Section title="Account">
@@ -116,6 +141,12 @@ export default function ProfilePage() {
         </Section>
         <p className="pb-4 text-center text-xs text-ink-faint">FilmRoll · Different lives. One roll of film.</p>
       </div>
+
+      {tutorial && (
+        <Suspense fallback={null}>
+          <Tutorial onDone={() => setTutorial(false)} />
+        </Suspense>
+      )}
 
       <Sheet open={editing} onClose={() => setEditing(false)} title="Edit profile">
         <div className="space-y-4 pb-4">

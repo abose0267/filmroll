@@ -30,6 +30,10 @@ export interface UserDoc {
   notificationPrefs: NotificationPrefs;
   /** Show "one year ago" resurfaced memories in the archive. */
   showMemories: boolean;
+  /** Require winding the film-advance wheel before each shot (default on). */
+  windToShoot?: boolean;
+  /** Finished (or skipped) the first-login tutorial. */
+  tutorialDone?: boolean;
 }
 
 export interface GroupSettings {

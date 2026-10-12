@@ -144,8 +144,11 @@ function Camera({ roll, group }: { roll: RollDoc; group: GroupDoc }) {
   const [screenFlash, setScreenFlash] = useState(false);
 
   // Film advance: the shutter only fires once the film is wound (after every shot).
-  const [wound, setWound] = useState(false);
+  const [woundState, setWound] = useState(false);
   const [nudge, setNudge] = useState(0);
+  // Winding is optional (Profile → Camera). When it's off the shutter is always ready.
+  const windOn = profile?.windToShoot !== false;
+  const wound = woundState || !windOn;
 
   // The shot in flight (shutter → undo window → saved) and its optional note.
   const shot = useRef<Shot | null>(null);
@@ -478,7 +481,11 @@ function Camera({ roll, group }: { roll: RollDoc; group: GroupDoc }) {
                   <span className={cx('size-[64px] rounded-full shadow-[inset_0_-4px_0_rgba(0,0,0,0.2)] transition-colors', shutterReady ? 'bg-coral' : 'bg-coral/35')} />
                 </button>
                 {/* iOS asks for motion access on a tap; asking on the first wind keeps it from swallowing other buttons (like ✕) */}
-                <WindWheel wound={wound} onWound={() => setWound(true)} onEngage={enableTilt} sound={sound} nudge={nudge} vertical={viewportLandscape} />
+                {windOn ? (
+                  <WindWheel wound={wound} onWound={() => setWound(true)} onEngage={enableTilt} sound={sound} nudge={nudge} vertical={viewportLandscape} />
+                ) : (
+                  <span className="size-14" aria-hidden />
+                )}
               </div>
             </div>
           </motion.section>

@@ -23,6 +23,7 @@ await p.waitForURL(/welcome/);
 for (const t of ['Next', 'Next', 'Set up my profile']) await p.getByRole('button', { name: t }).click();
 await p.getByRole('button', { name: 'Start using FilmRoll' }).click();
 await p.waitForURL(BASE + '/');
+await p.getByRole('dialog', { name: 'How FilmRoll works' }).getByRole('button', { name: 'Skip' }).click();
 await p.goto(BASE + '/g/new');
 await p.getByLabel('Group name').fill('Sideways Club');
 await p.getByRole('button', { name: 'Create group' }).click();

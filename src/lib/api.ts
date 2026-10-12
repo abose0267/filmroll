@@ -31,6 +31,8 @@ export const api = {
   >('finalizeExposure'),
   setPhotoNote: fn<{ groupId: string; rollId: string; photoId: string; caption: string; location: string }, { ok: true }>('setPhotoNote'),
   deleteAccount: fn<{ confirm: 'DELETE' }, { photos: number; groups: number }>('deleteAccount'),
+  amIAdmin: fn<Record<string, never>, { admin: boolean }>('amIAdmin'),
+  getAnalytics: fn<Record<string, never>, Analytics>('getAnalytics'),
 };
 
 const FRIENDLY: Record<string, string> = {
@@ -61,4 +63,17 @@ export function errorMessage(e: unknown): string {
 
 export function errorCode(e: unknown): string {
   return (e as { code?: string })?.code ?? '';
+}
+
+export interface Series { day: string; n: number }
+export interface Tally { key: string; n: number }
+export interface Analytics {
+  generatedAt: number;
+  totals: { users: number; groups: number; rolls: number; photos: number; comments: number; reactions: number };
+  rollsByStatus: { active: number; developing: number; developed: number; cancelled: number };
+  activity: { signups30: number; shots30: number; comments30: number; photographers7: number; photographers30: number };
+  daily: { signups: Series[]; shots: Series[]; comments: Series[] };
+  rolls: { avgFill: number; avgPhotos: number; avgPhotographers: number; avgDaysToDevelop: number; emptyDeveloped: number; presets: Tally[]; capacities: Tally[]; developModes: Tally[] };
+  groups: { avgMembers: number; withActiveOrPastRoll: number; sizes: Tally[] };
+  recentSignups: { name: string; createdAt: number; groups: number; onboarded: boolean }[];
 }

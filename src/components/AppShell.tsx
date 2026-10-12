@@ -1,4 +1,9 @@
+import { lazy, Suspense, useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
+import { doc, updateDoc } from 'firebase/firestore';
+import { useAuth } from '@/hooks/useAuth';
+import { db } from '@/lib/firebase';
+import { markSeen, seen } from '@/lib/format';
 import { Home, Images, UserRound, WifiOff } from 'lucide-react';
 import { useOnline } from '@/hooks/useData';
 import { cx } from './ui';
@@ -48,6 +53,27 @@ export function OfflineBanner() {
   );
 }
 
+const Tutorial = lazy(() => import('./Tutorial'));
+
+/** The tutorial shows once per account, right after onboarding. */
+function FirstRunTutorial() {
+  const { user, profile } = useAuth();
+  const [dismissed, setDismissed] = useState(false);
+  // Also remembered on this device, so it can't pop back up while the server write is in flight.
+  if (!user || !profile?.onboarded || profile.tutorialDone || dismissed || seen(`tutorial:${user.uid}`)) return null;
+  return (
+    <Suspense fallback={null}>
+      <Tutorial
+        onDone={() => {
+          setDismissed(true);
+          markSeen(`tutorial:${user.uid}`);
+          void updateDoc(doc(db, 'users', user.uid), { tutorialDone: true }).catch(() => undefined);
+        }}
+      />
+    </Suspense>
+  );
+}
+
 export default function AppShell() {
   const loc = useLocation();
   return (
@@ -56,6 +82,7 @@ export default function AppShell() {
         <Outlet />
       </div>
       <BottomNav />
+      <FirstRunTutorial />
     </div>
   );
 }

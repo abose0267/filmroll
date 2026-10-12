@@ -38,20 +38,22 @@ service cloud.firestore {
         && (d.photoURL == null || isStr(d.photoURL, 1000))
         && isStr(d.city, 60) && isStr(d.bio, 160)
         && d.onboarded is bool && d.showMemories is bool
+        && (!('windToShoot' in d) || d.windToShoot is bool)
+        && (!('tutorialDone' in d) || d.tutorialDone is bool)
         && validPrefs(d.notificationPrefs);
     }
 
     match /users/{uid} {
       allow read: if isSelf(uid);
       allow create: if isSelf(uid)
-        && request.resource.data.keys().hasOnly(['uid', 'displayName', 'photoURL', 'city', 'bio', 'createdAt', 'onboarded', 'groupIds', 'notificationPrefs', 'showMemories'])
+        && request.resource.data.keys().hasOnly(['uid', 'displayName', 'photoURL', 'city', 'bio', 'createdAt', 'onboarded', 'groupIds', 'notificationPrefs', 'showMemories', 'windToShoot', 'tutorialDone'])
         && request.resource.data.uid == uid
         && request.resource.data.groupIds == []
         && recent(request.resource.data.createdAt)
         && validProfile(request.resource.data);
       // groupIds is maintained by functions only.
       allow update: if isSelf(uid)
-        && changedOnly(['displayName', 'photoURL', 'city', 'bio', 'onboarded', 'notificationPrefs', 'showMemories'])
+        && changedOnly(['displayName', 'photoURL', 'city', 'bio', 'onboarded', 'notificationPrefs', 'showMemories', 'windToShoot', 'tutorialDone'])
         && validProfile(request.resource.data);
       allow delete: if false; // use the deleteAccount function
 

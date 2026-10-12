@@ -19,6 +19,8 @@ const AlbumPage = lazy(() => import('@/pages/AlbumPage'));
 const AlbumsPage = lazy(() => import('@/pages/AlbumsPage'));
 const ProfilePage = lazy(() => import('@/pages/ProfilePage'));
 const NotificationsPage = lazy(() => import('@/pages/NotificationsPage'));
+const AboutPage = lazy(() => import('@/pages/AboutPage'));
+const AdminPage = lazy(() => import('@/pages/AdminPage'));
 
 function Lazy({ children }: { children: ReactNode }) {
   return <Suspense fallback={<FullScreenLoader />}>{children}</Suspense>;
@@ -70,6 +72,8 @@ const router = createBrowserRouter([
       { path: 'albums', element: <Lazy><AlbumsPage /></Lazy> },
       { path: 'profile', element: <Lazy><ProfilePage /></Lazy> },
       { path: 'notifications', element: <Lazy><NotificationsPage /></Lazy> },
+      { path: 'about', element: <Lazy><AboutPage /></Lazy> },
+      { path: 'admin', element: <Lazy><AdminPage /></Lazy> },
       { path: 'g/new', element: <Lazy><NewGroupPage /></Lazy> },
       { path: 'g/:gid', element: <Lazy><GroupPage /></Lazy> },
       { path: 'g/:gid/settings', element: <Lazy><GroupSettingsPage /></Lazy> },

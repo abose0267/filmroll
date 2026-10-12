@@ -43,7 +43,7 @@ async function rejects(p: Promise<unknown>, pattern: RegExp, msg: string) {
 
 interface Client { name: string; uid: string; app: FirebaseApp; auth: Auth; db: Firestore; fn: Functions; st: FirebaseStorage }
 
-async function client(name: string): Promise<Client> {
+async function client(name: string, fixedEmail?: string): Promise<Client> {
   const app = initializeApp({ apiKey: 'demo', projectId: PROJECT, storageBucket: `${PROJECT}.appspot.com`, appId: 'demo' }, name);
   const auth = getAuth(app);
   connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
@@ -53,7 +53,7 @@ async function client(name: string): Promise<Client> {
   connectFunctionsEmulator(fn, '127.0.0.1', 5001);
   const st = getStorage(app);
   connectStorageEmulator(st, '127.0.0.1', 9199);
-  const cred = await createUserWithEmailAndPassword(auth, `${name}-${Date.now()}@example.com`, 'password123');
+  const cred = await createUserWithEmailAndPassword(auth, fixedEmail ?? `${name}-${Date.now()}@example.com`, 'password123');
   const uid = cred.user.uid;
   await setDoc(doc(db, 'users', uid), {
     uid, displayName: name[0].toUpperCase() + name.slice(1), photoURL: null, city: '', bio: '', createdAt: Date.now(),
@@ -89,7 +89,7 @@ const rollOf = async (c: Client, gid: string, rid: string) => (await getDoc(doc(
 
 async function main() {
   console.log('Users & groups');
-  const [alice, bob, carol, dave] = await Promise.all(['alice', 'bob', 'carol', 'dave'].map(client));
+  const [alice, bob, carol, dave] = await Promise.all(['alice', 'bob', 'carol', 'dave'].map((n) => client(n)));
   const { groupId: gid } = await call<{ groupId: string; inviteCode: string }>(alice, 'createGroup', { name: 'The Crew', theme: 'coral' });
   const { code } = await call<{ code: string }>(bob, 'getInvite', { groupId: gid }).catch(() => ({ code: '' }));
   check(!code, 'non-members cannot fetch the invite code');
@@ -242,7 +242,15 @@ async function main() {
   check(r1Photos.docs.every((d) => d.data().uid !== bob.uid), 'deleted user’s photos are removed from albums');
   check((await getDocs(collection(alice.db, 'groups', gid, 'rolls', r1, 'comments'))).size === 0, 'deleted user’s comments are removed');
 
-  await Promise.all([alice, bob, carol, dave, eve].map((c) => deleteApp(c.app)));
+  console.log('\nAnalytics (owner-only)');
+  await rejects(call(alice, 'getAnalytics', {}), /permission|not available/i, 'non-admins cannot read analytics');
+  check((await call<{ admin: boolean }>(alice, 'amIAdmin', {})).admin === false, 'amIAdmin is false for regular users');
+  const admin = await client('admin', 'admin-e2e@example.com');
+  check((await call<{ admin: boolean }>(admin, 'amIAdmin', {})).admin === true, 'amIAdmin is true for the configured admin');
+  const stats = await call<{ totals: { users: number; photos: number }; daily: { shots: { n: number }[] }; rolls: { presets: { key: string }[] } }>(admin, 'getAnalytics', {});
+  check(stats.totals.users >= 5 && stats.totals.photos >= 10 && stats.daily.shots.length === 30 && stats.rolls.presets.length > 0, `admin gets analytics (${stats.totals.users} users, ${stats.totals.photos} photos)`);
+
+  await Promise.all([alice, bob, carol, dave, eve, admin].map((c) => deleteApp(c.app)));
   console.log(`\n${passes} passed, ${failures} failed`);
   process.exit(failures ? 1 : 0);
 }

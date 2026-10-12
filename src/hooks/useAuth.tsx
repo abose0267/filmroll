@@ -30,6 +30,7 @@ async function ensureProfile(u: User, name?: string) {
   const profile: UserDoc = {
     uid: u.uid, displayName, photoURL: u.photoURL?.startsWith('https://') ? u.photoURL : null, city: '', bio: '',
     createdAt: Date.now(), onboarded: false, groupIds: [], notificationPrefs: DEFAULT_NOTIFICATION_PREFS, showMemories: true,
+    windToShoot: true, tutorialDone: false,
   };
   await setDoc(doc(db, 'users', u.uid), profile);
 }

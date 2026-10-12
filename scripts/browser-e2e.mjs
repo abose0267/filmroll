@@ -52,6 +52,15 @@ async function signUp({ page, name }) {
   await page.getByLabel('City').fill(name === 'Alice' ? 'Austin' : 'Boston');
   await page.getByRole('button', { name: 'Start using FilmRoll' }).click();
   await page.waitForURL(BASE + '/');
+  // first-login tutorial: Alice walks through it, everyone else skips
+  const tut = page.getByRole('dialog', { name: 'How FilmRoll works' });
+  await tut.waitFor();
+  if (name === 'Alice') {
+    for (let i = 0; i < 6; i++) await page.getByRole('button', { name: 'Next' }).click();
+    await shot(page, '01b-tutorial-last');
+    await page.getByRole('button', { name: 'Start shooting' }).click();
+  } else await tut.getByRole('button', { name: 'Skip' }).click();
+  await tut.waitFor({ state: 'detached' });
   return email;
 }
 
@@ -116,6 +125,10 @@ try {
   await shot(alice.page, '01-landing');
   const aliceEmail = await signUp(alice);
   await alice.page.getByRole('heading', { name: /Alice/ }).waitFor();
+  await alice.page.reload();
+  await alice.page.getByRole('heading', { name: /Alice/ }).waitFor();
+  await alice.page.waitForTimeout(800);
+  log((await alice.page.getByRole('dialog', { name: 'How FilmRoll works' }).count()) === 0, 'tutorial shows once per account');
   await shot(alice.page, '02-home-empty');
   await alice.page.getByRole('button', { name: 'Start a group' }).click();
   await alice.page.getByLabel('Group name').fill('The Crew');
@@ -269,7 +282,35 @@ try {
   await shot(alice.page, '18-albums');
   await alice.page.goto(BASE + '/profile');
   await alice.page.getByText('Your groups').waitFor();
+  await alice.page.waitForTimeout(800);
+  log((await alice.page.getByRole('link', { name: 'Analytics' }).count()) === 0, 'analytics link hidden for non-admins');
   await shot(alice.page, '19-profile');
+  await alice.page.getByRole('link', { name: 'About FilmRoll' }).click();
+  await alice.page.getByRole('heading', { name: 'How it works' }).waitFor();
+  await shot(alice.page, '19b-about');
+  log(true, 'About FilmRoll page opens from Profile');
+  await alice.page.goto(BASE + '/admin');
+  await alice.page.getByText('Not available').first().waitFor();
+  log(true, 'analytics page refuses non-admins (server-side)');
+  // winding is optional
+  await alice.page.goto(BASE + '/profile');
+  await alice.page.getByRole('switch', { name: /Wind the film before each shot/ }).click();
+  await alice.page.waitForTimeout(500);
+  await alice.page.goto(`${BASE}/g/${gid}/new-roll`);
+  await alice.page.getByLabel('Roll name').fill('No-wind roll');
+  await alice.page.getByRole('radio', { name: '12 photos' }).click();
+  await alice.page.getByRole('radio', { name: /When the roll is full/ }).click();
+  await alice.page.getByRole('button', { name: 'Load 12 exposures' }).click();
+  await alice.page.waitForURL(new RegExp(`/g/${gid}$`));
+  await alice.page.goto(`${BASE}/camera?g=${gid}`);
+  await alice.page.waitForFunction(() => { const v = document.querySelector('video'); return v && v.videoWidth > 0 && !v.classList.contains('opacity-0'); }, null, { timeout: 15000 });
+  log((await alice.page.getByRole('slider', { name: 'Wind the film' }).count()) === 0, 'with winding off there is no wheel');
+  await alice.page.getByRole('button', { name: /^Take photo/ }).click();
+  await alice.page.getByText('undeveloped', { exact: true }).waitFor();
+  log(true, 'with winding off the shutter fires straight away');
+  await noteAndDone(alice.page, 'no wind');
+  await savesSettled(alice.page);
+  await alice.page.goto(BASE + '/');
 
   console.log('Reduced motion');
   const calm = await browser.newContext({ ...phone, reducedMotion: 'reduce' });
@@ -284,9 +325,7 @@ try {
   await cp.getByRole('heading', { name: 'Contact sheet' }).waitFor();
   log(true, 'reduced-motion reveal is a simple card');
 
-  await alice.page.goto(BASE + '/camera');
-  await alice.page.getByText('No roll in the camera').waitFor();
-  await shot(alice.page, '21-camera-no-roll');
+
 } catch (e) {
   failures++;
   console.error(e);
