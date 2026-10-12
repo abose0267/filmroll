@@ -4,7 +4,7 @@
  */
 export { createGroup, previewInvite, joinGroup, leaveGroup, removeMember, setMemberRole, updateGroup, getInvite, rotateInvite, setGroupMute, onUserUpdated } from './groups';
 export { startRoll, updateRoll, cancelRoll } from './rolls';
-export { reserveExposure, releaseExposure, finalizeExposure } from './exposures';
+export { reserveExposure, releaseExposure, finalizeExposure, setPhotoNote } from './exposures';
 export { sweepRolls } from './sweep';
 export { photo } from './photo';
 export { onCommentCreated } from './comments';

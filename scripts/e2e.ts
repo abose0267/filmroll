@@ -122,6 +122,10 @@ async function main() {
   const f1 = await finalize(alice, gid, r1, a.reservationId, 'my secret coffee');
   const f1b = await finalize(alice, gid, r1, a.reservationId, 'my secret coffee');
   check(f1b.duplicate && f1b.photoId === f1.photoId, 'finalizing twice is idempotent');
+  // notes can be added after the shot is saved (shutter is final; the note comes later)
+  await call(alice, 'setPhotoNote', { groupId: gid, rollId: r1, photoId: f1.photoId, caption: 'my secret coffee (edited)', location: 'Austin' });
+  check(true, 'photographer can add/edit the note on their own shot before development');
+  await rejects(call(bob, 'setPhotoNote', { groupId: gid, rollId: r1, photoId: f1.photoId, caption: 'hijack', location: '' }), /not-found|wasn.t found/i, 'others cannot edit your shot’s note');
   let roll = await rollOf(bob, gid, r1);
   check(roll.exposuresUsed === 1 && roll.exposuresReserved === 0, `counts after first shot: used ${roll.exposuresUsed}, reserved ${roll.exposuresReserved}`);
 
@@ -173,7 +177,8 @@ async function main() {
   const frames = photos.docs.map((d) => d.data().frame as number).sort((x, y) => x - y);
   check(frames.join(',') === '1,2,3,4,5,6,7,8,9,10,11,12', 'frames are numbered 1–12 without gaps');
   const own = photos.docs.find((d) => d.id === f1.photoId)!.data();
-  check(own.caption === 'my secret coffee', 'captions revealed after development');
+  check(own.caption === 'my secret coffee (edited)' && own.location === 'Austin', 'the edited note is what gets revealed');
+  await rejects(call(alice, 'setPhotoNote', { groupId: gid, rollId: r1, photoId: f1.photoId, caption: 'too late', location: '' }), /already been developed/i, 'notes are locked once the roll develops');
   const img = await fetchPhoto(bob, gid, r1, f1.photoId, 'display');
   const bytes = new Uint8Array(await img.arrayBuffer());
   check(img.status === 200 && bytes.length === JPEG.length && img.headers.get('cache-control')?.includes('private'), 'photo endpoint serves the image privately after development');

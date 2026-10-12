@@ -208,3 +208,27 @@ async function afterInfo(gid: string, rid: string) {
   const r = (await rollRef(gid, rid).get()).data() as RollDoc;
   return { remaining: shotsRemaining(r), status: r.status };
 }
+
+/**
+ * Lets the photographer add or change the note (caption + location) on their
+ * own shot until the roll develops. Shots are saved the moment the undo window
+ * closes, so the note can arrive a little later.
+ */
+export const setPhotoNote = onCall(opts, async (req) => {
+  const uid = requireAuth(req);
+  const { gid } = await requireMember(req.data?.groupId, uid);
+  const rid = docId(req.data?.rollId, 'roll');
+  const pid = docId(req.data?.photoId, 'photo');
+  await rateLimit(`note_${uid}`, 120, HOUR, 'Slow down a little — try again in a bit.');
+  const caption = cleanText(req.data?.caption, LIMITS.caption, { multiline: true });
+  const location = cleanText(req.data?.location, LIMITS.location);
+  await db.runTransaction(async (tx) => {
+    const [rollSnap, photoSnap] = await Promise.all([tx.get(rollRef(gid, rid)), tx.get(photosCol(gid, rid).doc(pid))]);
+    const roll = rollSnap.data() as RollDoc | undefined;
+    const photo = photoSnap.data() as PhotoDoc | undefined;
+    if (!roll || !photo || photo.uid !== uid) throw new HttpsError('not-found', 'That shot wasn’t found.');
+    if (roll.status === 'developed' || roll.status === 'cancelled') throw new HttpsError('failed-precondition', 'This roll has already been developed.');
+    tx.update(photoSnap.ref, { caption, location });
+  });
+  return { ok: true };
+});

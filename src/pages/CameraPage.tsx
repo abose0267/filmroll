@@ -1,16 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import { CalendarDays, Camera as CameraIcon, MapPin, RefreshCcw, SwitchCamera, Volume2, VolumeX, X, Zap, ZapOff } from 'lucide-react';
+import { CalendarDays, Camera as CameraIcon, Check, MapPin, RotateCcw, SwitchCamera, Volume2, VolumeX, X, Zap, ZapOff } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useActiveRolls, useMyGroups, useOnline } from '@/hooks/useData';
 import { Button, FullScreenLoader, IconButton, TextArea, TextInput, cx, useToast } from '@/components/ui';
 import { DisposableCamera, FilmStrip } from '@/components/film';
-import { errorCode, errorMessage } from '@/lib/api';
-import { decode, previewUrl, processPhoto } from '@/lib/image';
-import { submitExposure, type SubmitStage } from '@/lib/upload';
+import { errorMessage } from '@/lib/api';
+import { decode } from '@/lib/image';
+import { Shot, type ShotSnapshot } from '@/lib/shot';
+import { WindWheel } from '@/components/WindWheel';
 import { cropToAspect, rotatedSize, rotationFor, useDeviceTilt, useViewportLandscape } from '@/lib/orientation';
-import { playAdvance, playShutter, vibrate } from '@/lib/sound';
+import { playShutter, vibrate } from '@/lib/sound';
 import { randomRequestId } from '@/lib/format';
 import { FALLBACK_FILE_MAX_AGE_MS, LIMITS } from '@shared/constants';
 import { PRESETS, dateStampText, seedFrom } from '@shared/presets';
@@ -18,7 +19,10 @@ import { shotsRemaining } from '@shared/rolls';
 import type { GroupDoc, RollDoc } from '@shared/types';
 
 type Facing = 'environment' | 'user';
-type Stage = 'camera' | 'confirm' | 'submitting' | 'done';
+type Stage = 'camera' | 'note' | 'last';
+
+/** Seconds to change your mind after the shutter. */
+const UNDO_SECONDS = 3;
 
 /** CSS approximation of the film so the viewfinder hints at the look. */
 function viewfinderFilter(roll: RollDoc): string {
@@ -138,17 +142,19 @@ function Camera({ roll, group }: { roll: RollDoc; group: GroupDoc }) {
   const [blink, setBlink] = useState(false);
   const [screenFlash, setScreenFlash] = useState(false);
 
-  const [bitmap, setBitmap] = useState<ImageBitmap | null>(null);
-  const [capturedAt, setCapturedAt] = useState(Date.now());
-  const [preview, setPreview] = useState<string | null>(null);
+  // Film advance: the shutter only fires once the film is wound (after every shot).
+  const [wound, setWound] = useState(false);
+  const [nudge, setNudge] = useState(0);
+
+  // The shot in flight (shutter → undo window → saved) and its optional note.
+  const shot = useRef<Shot | null>(null);
+  const [snap, setSnap] = useState<ShotSnapshot | null>(null);
+  const [frameShape, setFrameShape] = useState<'portrait' | 'landscape'>('portrait');
+  const [frameNo, setFrameNo] = useState(0);
+  const [undoLeft, setUndoLeft] = useState(0);
   const [caption, setCaption] = useState('');
   const [location, setLocation] = useState('');
-  const [progress, setProgress] = useState<{ stage: SubmitStage; progress: number }>({ stage: 'reserving', progress: 0 });
-  const [submitError, setSubmitError] = useState<string | null>(null);
-  const [remainingAfter, setRemainingAfter] = useState<number | null>(null);
-  const [savedLine] = useState(() => SAVED[Math.floor(Math.random() * SAVED.length)]);
-  const attempt = useRef<{ requestId: string; reservation?: { reservationId: string; uploadPrefix: string } } | null>(null);
-  const seed = useRef(seedFrom(randomRequestId()));
+  const [saving, setSaving] = useState(false);
 
   const remaining = shotsRemaining(roll);
 
@@ -199,46 +205,73 @@ function Camera({ roll, group }: { roll: RollDoc; group: GroupDoc }) {
   }, [stage, facing, startStream, stopStream]);
   useEffect(() => stopStream, [stopStream]);
 
-  // Pause the camera when the app is backgrounded.
+  /** Save whatever is in flight (used when leaving or backgrounding the app). */
+  const flush = useCallback(() => {
+    const s = shot.current;
+    if (!s || s.snapshot.state === 'cancelled' || s.snapshot.state === 'saved') return;
+    s.commit().then(() => s.saveNote()).catch(() => undefined);
+  }, []);
+
+  // Pause the camera when the app is backgrounded; never lose a shot in flight.
   useEffect(() => {
     const onVis = () => {
-      if (document.hidden) stopStream();
-      else if (stage === 'camera') void startStream(facing);
+      if (document.hidden) {
+        stopStream();
+        flush();
+      } else if (stage === 'camera') void startStream(facing);
     };
     document.addEventListener('visibilitychange', onVis);
     return () => document.removeEventListener('visibilitychange', onVis);
-  }, [stage, facing, startStream, stopStream]);
+  }, [stage, facing, startStream, stopStream, flush]);
+  useEffect(() => flush, [flush]);
 
-  // Build the film preview whenever a new image is chosen.
+  // Keep the shot's note in sync while typing.
   useEffect(() => {
-    if (!bitmap) return;
-    let alive = true;
-    let url: string | null = null;
-    previewUrl(bitmap, { preset: roll.preset, seed: seed.current, dateStamp: roll.dateStamp, capturedAt }).then((u) => {
-      url = u;
-      if (alive) setPreview(u);
-      else URL.revokeObjectURL(u);
-    }, (e) => toast(errorMessage(e), 'error'));
-    return () => {
-      alive = false;
-      if (url) URL.revokeObjectURL(url);
-    };
-  }, [bitmap, roll.preset, roll.dateStamp, capturedAt, toast]);
+    shot.current?.setNote(caption.trim(), location.trim());
+  }, [caption, location]);
 
-  function acceptImage(b: ImageBitmap, at: number) {
-    bitmap?.close();
-    seed.current = seedFrom(randomRequestId());
-    attempt.current = null;
-    setSubmitError(null);
-    setPreview(null);
-    setBitmap(b);
-    setCapturedAt(at);
-    setStage('confirm');
+  // Undo window: when it runs out, the shot is committed to the roll.
+  useEffect(() => {
+    if (stage !== 'note' || undoLeft <= 0) return;
+    const t = setTimeout(() => {
+      const left = Math.max(0, undoLeft - 0.1);
+      setUndoLeft(left);
+      if (left === 0) void shot.current?.commit();
+    }, 100);
+    return () => clearTimeout(t);
+  }, [stage, undoLeft]);
+
+  /** The shutter is final: everything after this runs in the background. */
+  function begin(b: ImageBitmap, at: number) {
+    setWound(false);
+    setFrameShape(b.width > b.height ? 'landscape' : 'portrait');
+    setFrameNo(roll.exposuresUsed + 1);
+    setCaption('');
+    setLocation('');
+    const s = new Shot({ groupId: roll.groupId, rollId: roll.id, preset: roll.preset, dateStamp: roll.dateStamp, seed: seedFrom(randomRequestId()), capturedAt: at, source: b, onChange: setSnap });
+    shot.current = s;
+    setSnap(s.snapshot);
+    void s.start();
+    setUndoLeft(UNDO_SECONDS);
+    setStage('note');
+  }
+
+  function shutterPressed() {
+    if (stage !== 'camera') return;
+    if (remaining <= 0 || roll.status !== 'active') return toast('No exposures left on this roll.');
+    if (!online) return toast('You’re offline — connect to save a shot.', 'error');
+    if (!wound) {
+      setNudge((n) => n + 1);
+      vibrate([8, 40, 8]);
+      return toast('Wind the film first ⟲');
+    }
+    if (camState === 'live') void shoot();
+    else nativeInput.current?.click();
   }
 
   async function shoot() {
     const v = video.current;
-    if (!v || camState !== 'live' || !v.videoWidth) return;
+    if (!v || !v.videoWidth) return;
     const track = stream.current?.getVideoTracks()[0];
     if (sound) playShutter();
     vibrate(15);
@@ -263,8 +296,8 @@ function Camera({ roll, group }: { roll: RollDoc; group: GroupDoc }) {
     if (flash && torchSupported && track) await track.applyConstraints({ advanced: [{ torch: false } as MediaTrackConstraintSet] }).catch(() => undefined);
     setScreenFlash(false);
     setBlink(true);
-    setTimeout(() => setBlink(false), reduce ? 0 : 160);
-    acceptImage(await createImageBitmap(c), Date.now());
+    setTimeout(() => setBlink(false), reduce ? 0 : 220);
+    begin(await createImageBitmap(c), Date.now());
   }
 
   /** Phone-camera fallback (when the in-app camera can't open). Only brand-new shots are accepted. */
@@ -276,55 +309,53 @@ function Camera({ roll, group }: { roll: RollDoc; group: GroupDoc }) {
       return toast('FilmRoll only takes photos shot just now — no old ones from your library.', 'error');
     }
     try {
-      const b = await decode(f);
-      acceptImage(b, Date.now());
+      begin(await decode(f), Date.now());
     } catch (e) {
       toast(errorMessage(e), 'error');
     }
   }
 
-  async function submit() {
-    if (!bitmap) return;
-    if (!online) return setSubmitError('You’re offline. Connect to the internet to save this photo.');
-    setStage('submitting');
-    setSubmitError(null);
-    attempt.current ??= { requestId: randomRequestId() };
+  async function undo() {
+    const s = shot.current;
+    if (!s || !(await s.cancel())) return;
+    shot.current = null;
+    setSnap(null);
+    setWound(true); // the frame wasn't used, so the film is still wound
+    setStage('camera');
+    toast('Shot discarded — the exposure is back.');
+  }
+
+  async function done() {
+    const s = shot.current;
+    if (!s) return;
+    setSaving(true);
     try {
-      setProgress({ stage: 'reserving', progress: 0 });
-      const processed = await processPhoto(bitmap, { preset: roll.preset, seed: seed.current, dateStamp: roll.dateStamp, capturedAt });
-      const out = await submitExposure(
-        { groupId: roll.groupId, rollId: roll.id, requestId: attempt.current.requestId, photo: processed, caption: caption.trim(), location: location.trim(), capturedAt, preset: roll.preset },
-        setProgress,
-        attempt.current.reservation,
-      );
-      setRemainingAfter(out.remaining);
-      if (sound) playAdvance();
-      vibrate([10, 40, 10]);
-      // The photo is now hidden — even from you. Drop every local copy.
-      bitmap.close();
-      setBitmap(null);
-      setPreview(null);
-      setCaption('');
-      attempt.current = null;
-      setStage('done');
-    } catch (e) {
-      const code = errorCode(e);
-      const res = (e as { reservation?: { reservationId: string; uploadPrefix: string } }).reservation;
-      if (res && attempt.current) attempt.current.reservation = res;
-      if (code === 'functions/deadline-exceeded') attempt.current = null; // expired: next try takes a fresh exposure
-      if (code === 'functions/resource-exhausted' && /No exposures left/.test(errorMessage(e))) {
-        setSubmitError('Someone just took the last shot on this roll! Your photo wasn’t added.');
-      } else if (code === 'functions/failed-precondition' && /developed/i.test(errorMessage(e))) {
-        setSubmitError('The roll developed before your photo finished uploading, so it wasn’t added.');
-      } else setSubmitError(errorMessage(e));
-      setStage('confirm');
+      s.setNote(caption.trim(), location.trim());
+      setUndoLeft(0);
+      await s.commit();
+      if (s.snapshot.state !== 'saved') return; // failed: the panel shows why
+      await s.saveNote().catch((e) => toast(`Your shot is saved, but the note wasn’t: ${errorMessage(e)}`, 'error'));
+      const left = s.snapshot.remaining ?? remaining - 1;
+      shot.current = null;
+      if (left <= 0 || (s.snapshot.rollStatus && s.snapshot.rollStatus !== 'active')) setStage('last');
+      else {
+        setStage('camera');
+        toast(left <= 8 ? `${SAVED[frameNo % SAVED.length]} Only ${left} left.` : SAVED[frameNo % SAVED.length]);
+      }
+    } finally {
+      setSaving(false);
     }
   }
 
   const leave = () => {
     stopStream();
+    flush();
     nav(`/g/${roll.groupId}`);
   };
+
+  const status = snap?.state;
+  const committed = status === 'committing' || status === 'saved';
+  const shutterReady = wound && stage === 'camera' && remaining > 0;
 
   return (
     <main className="fixed inset-0 flex flex-col bg-body text-cream" aria-label="Camera" onPointerDown={enableTilt}>
@@ -336,7 +367,7 @@ function Camera({ roll, group }: { roll: RollDoc; group: GroupDoc }) {
           <p className="truncate text-xs text-cream/60">{roll.name} · <span className="font-mono">{PRESETS[roll.preset].code}</span></p>
         </div>
         <div className="grid h-9 min-w-14 place-items-center rounded-lg bg-black px-2 font-mono text-lg text-amber shadow-inner" style={turn} aria-label={`${remaining} exposures left`}>
-          {String(stage === 'done' && remainingAfter != null ? remainingAfter : remaining).padStart(2, '0')}
+          {String(remaining).padStart(2, '0')}
         </div>
       </div>
 
@@ -346,12 +377,19 @@ function Camera({ roll, group }: { roll: RollDoc; group: GroupDoc }) {
             <div className={cx('flex min-h-0 flex-1 items-center justify-center', viewportLandscape ? 'py-2 pl-4' : 'px-5 py-4')}>
               <div className={cx('relative max-h-full overflow-hidden rounded-[22px] bg-black shadow-[inset_0_0_0_6px_#1a1816]', viewportLandscape ? 'aspect-[4/3] h-full' : 'aspect-[3/4] w-full max-w-md')}>
                 <video
-                  ref={video}
+                  ref={(el) => {
+                    // The section re-mounts after the note screen; re-attach the live stream.
+                    video.current = el;
+                    if (el && stream.current && el.srcObject !== stream.current) {
+                      el.srcObject = stream.current;
+                      void el.play().catch(() => undefined);
+                    }
+                  }}
                   playsInline
                   muted
                   autoPlay
-                  className={cx('size-full object-cover', facing === 'user' && '-scale-x-100', camState !== 'live' && 'opacity-0')}
-                  style={{ filter: viewfinderFilter(roll) }}
+                  className={cx('size-full object-cover transition-[filter] duration-500', facing === 'user' && '-scale-x-100', camState !== 'live' && 'opacity-0')}
+                  style={{ filter: `${viewfinderFilter(roll)}${wound ? '' : ' brightness(0.55) blur(1px)'}` }}
                   aria-label="Viewfinder"
                 />
                 {camState !== 'live' && (
@@ -362,14 +400,11 @@ function Camera({ roll, group }: { roll: RollDoc; group: GroupDoc }) {
                       <>
                         <CameraIcon className="size-10 text-cream/40" />
                         <p className="text-sm text-cream/80">
-                          {camState === 'denied' && 'Camera access is off. You can allow it in your browser settings, or use your phone’s camera instead.'}
-                          {camState === 'unsupported' && 'This browser can’t open the camera here. Use your phone’s camera or pick a photo.'}
-                          {camState === 'error' && 'The camera couldn’t start. Try again, or use your phone’s camera.'}
+                          {camState === 'denied' && 'Camera access is off. Allow it in your browser settings, or wind the film and press the shutter to use your phone’s camera.'}
+                          {camState === 'unsupported' && 'This browser can’t open the camera here. Wind the film and press the shutter to use your phone’s camera.'}
+                          {camState === 'error' && 'The camera couldn’t start. Try again, or press the shutter to use your phone’s camera.'}
                         </p>
-                        <div className="flex flex-wrap justify-center gap-2">
-                          <Button size="sm" onClick={() => nativeInput.current?.click()}>Use phone camera</Button>
-                          {camState !== 'unsupported' && <Button size="sm" variant="secondary" onClick={() => startStream(facing)}>Try again</Button>}
-                        </div>
+                        {camState !== 'unsupported' && <Button size="sm" variant="secondary" onClick={() => startStream(facing)}>Try again</Button>}
                       </>
                     )}
                   </div>
@@ -378,104 +413,109 @@ function Camera({ roll, group }: { roll: RollDoc; group: GroupDoc }) {
                 <div className="pointer-events-none absolute inset-3 rounded-[14px] border border-white/15" />
                 <div className="pointer-events-none absolute inset-0 shadow-[inset_0_0_60px_rgba(0,0,0,0.55)]" />
                 {roll.dateStamp && sideways === 'portrait' && <span className="pointer-events-none absolute bottom-4 right-5 font-mono text-sm text-stamp/80">{dateStampText(Date.now())}</span>}
-                <AnimatePresence>{blink && <motion.div className="absolute inset-0 bg-black" initial={{ opacity: 1 }} animate={{ opacity: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.25 }} />}</AnimatePresence>
+                {!wound && camState === 'live' && (
+                  <div className="pointer-events-none absolute inset-x-0 bottom-12 flex justify-center">
+                    <span className="rounded-full bg-black/60 px-3 py-1.5 font-mono text-xs uppercase tracking-widest text-amber" style={turn}>Wind the film to shoot</span>
+                  </div>
+                )}
+                <AnimatePresence>{blink && <motion.div className="absolute inset-0 bg-black" initial={{ opacity: 1 }} animate={{ opacity: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }} />}</AnimatePresence>
               </div>
             </div>
 
-            <div className={cx('flex', viewportLandscape ? 'w-44 flex-col-reverse justify-center pr-safe' : 'flex-col')}>
-            <div className={cx('flex items-center justify-center text-cream/80', viewportLandscape ? 'flex-col gap-1 pt-2' : 'gap-6 pb-2')}>
-              <button className="flex items-center gap-1.5 rounded-full px-3 py-2 text-xs font-semibold active:bg-white/10" onClick={() => { setFlash(!flash); writePref('flash', !flash); }} aria-pressed={flash}>
-                {flash ? <Zap className="size-4 text-amber" style={turn} /> : <ZapOff className="size-4" style={turn} />} Flash {flash ? 'on' : 'off'}
-              </button>
-              <span className="flex items-center gap-1.5 text-xs"><CalendarDays className="size-4" style={turn} /> {roll.dateStamp ? 'Date stamp' : 'No stamp'}</span>
-              <button className="flex items-center gap-1.5 rounded-full px-3 py-2 text-xs font-semibold active:bg-white/10" onClick={() => { setSound(!sound); writePref('sound', !sound); }} aria-pressed={sound}>
-                {sound ? <Volume2 className="size-4" style={turn} /> : <VolumeX className="size-4" style={turn} />} Sound
-              </button>
-            </div>
+            <div className={cx('flex', viewportLandscape ? 'w-48 flex-col-reverse justify-center pr-safe' : 'flex-col')}>
+              <div className={cx('flex items-center justify-center text-cream/80', viewportLandscape ? 'gap-1 pt-3' : 'gap-6 pb-3')}>
+                <button className="flex items-center gap-1.5 rounded-full px-3 py-2 text-xs font-semibold active:bg-white/10" onClick={() => { setFlash(!flash); writePref('flash', !flash); }} aria-pressed={flash}>
+                  {flash ? <Zap className="size-4 text-amber" style={turn} /> : <ZapOff className="size-4" style={turn} />} <span className={cx(viewportLandscape && 'sr-only')}>Flash {flash ? 'on' : 'off'}</span>
+                </button>
+                <span className="flex items-center gap-1.5 text-xs"><CalendarDays className="size-4" style={turn} /> <span className={cx(viewportLandscape && 'sr-only')}>{roll.dateStamp ? 'Date stamp' : 'No stamp'}</span></span>
+                <button className="flex items-center gap-1.5 rounded-full px-3 py-2 text-xs font-semibold active:bg-white/10" onClick={() => { setSound(!sound); writePref('sound', !sound); }} aria-pressed={sound}>
+                  {sound ? <Volume2 className="size-4" style={turn} /> : <VolumeX className="size-4" style={turn} />} <span className={cx(viewportLandscape && 'sr-only')}>Sound</span>
+                </button>
+              </div>
 
-            <div className={cx('flex items-center', viewportLandscape ? 'flex-col justify-center gap-4' : 'justify-around px-8 pb-safe pt-2')}>
-              {/* no gallery: only fresh shots go on the roll */}
-              <span className="size-14" aria-hidden />
-              <button
-                onClick={camState === 'live' ? shoot : () => nativeInput.current?.click()}
-                aria-label="Take photo"
-                className="grid size-[84px] place-items-center rounded-full bg-cream/15 ring-4 ring-cream/80 transition active:scale-90"
-              >
-                <span className="size-[64px] rounded-full bg-coral shadow-[inset_0_-4px_0_rgba(0,0,0,0.2)]" />
-              </button>
-              <IconButton label="Switch camera" disabled={!canFlip || camState !== 'live'} onClick={() => setFacing(facing === 'user' ? 'environment' : 'user')} className="size-14 bg-white/10 text-cream active:bg-white/20 disabled:opacity-30"><SwitchCamera className="size-6" style={turn} /></IconButton>
-            </div>
+              <div className={cx('flex items-center', viewportLandscape ? 'flex-col justify-center gap-4' : 'justify-around px-6 pb-safe pt-4')}>
+                <IconButton label="Switch camera" disabled={!canFlip || camState !== 'live'} onClick={() => setFacing(facing === 'user' ? 'environment' : 'user')} className="size-14 bg-white/10 text-cream active:bg-white/20 disabled:opacity-30"><SwitchCamera className="size-6" style={turn} /></IconButton>
+                <button
+                  onClick={shutterPressed}
+                  aria-label={wound ? 'Take photo' : 'Take photo (wind the film first)'}
+                  className={cx('grid size-[84px] place-items-center rounded-full bg-cream/15 ring-4 transition active:scale-90', shutterReady ? 'ring-cream/80' : 'ring-cream/25')}
+                >
+                  <span className={cx('size-[64px] rounded-full shadow-[inset_0_-4px_0_rgba(0,0,0,0.2)] transition-colors', shutterReady ? 'bg-coral' : 'bg-coral/35')} />
+                </button>
+                <WindWheel wound={wound} onWound={() => setWound(true)} sound={sound} nudge={nudge} vertical={viewportLandscape} />
+              </div>
             </div>
           </motion.section>
         )}
 
-        {(stage === 'confirm' || stage === 'submitting') && (
-          <motion.section key="confirm" className="flex min-h-0 flex-1 flex-col overflow-y-auto" initial={{ opacity: 0, y: reduce ? 0 : 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
-            <div className="flex justify-center px-6 pt-4">
-              <div className="w-full max-w-sm -rotate-1 bg-cream p-3 pb-10 shadow-print">
-                {preview ? <img src={preview} alt="Your photo with the film effect" className="max-h-[52dvh] w-full object-contain" /> : <div className={cx('grid place-items-center bg-[#2a2622] text-sm text-cream/60', bitmap && bitmap.width > bitmap.height ? 'aspect-[4/3]' : 'aspect-[3/4]')}>Developing preview…</div>}
-                <p className="mt-2 text-center font-mono text-[11px] text-ink-soft">{PRESETS[roll.preset].name}</p>
-              </div>
+        {stage === 'note' && (
+          <motion.section key="note" className="flex min-h-0 flex-1 flex-col overflow-y-auto" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            {/* the undeveloped frame: no preview, just like film */}
+            <div className="flex justify-center px-6 pt-6">
+              <motion.div
+                className={cx('relative flex flex-col items-center justify-center gap-2 rounded-md bg-gradient-to-br from-[#4a2a1a] to-[#1a100b] text-center shadow-print', frameShape === 'landscape' ? 'aspect-[4/3] w-full max-w-sm' : 'aspect-[3/4] w-3/5 max-w-[240px]')}
+                initial={reduce ? false : { x: 60, opacity: 0 }}
+                animate={{ x: 0, opacity: 1 }}
+                transition={{ type: 'spring', damping: 18 }}
+              >
+                <div className="absolute inset-x-2 top-1.5 h-2.5 sprockets-rect opacity-60" />
+                <div className="absolute inset-x-2 bottom-1.5 h-2.5 sprockets-rect opacity-60" />
+                <span className="font-mono text-3xl text-amber/80">{String(frameNo).padStart(2, '0')}</span>
+                <span className="px-4 font-mono text-[10px] uppercase tracking-[0.2em] text-amber/60">undeveloped</span>
+              </motion.div>
             </div>
             <div className="mx-auto w-full max-w-md space-y-3 px-5 pb-safe pt-5">
-              {stage === 'confirm' && (
-                <div className="flex justify-center gap-2">
-                  <Button size="sm" variant="ghost" className="!text-cream" icon={<RefreshCcw className="size-4" />} onClick={() => { bitmap?.close(); setBitmap(null); setStage('camera'); }}>Retake</Button>
-                </div>
-              )}
-              <TextArea value={caption} onChange={(e) => setCaption(e.target.value.slice(0, LIMITS.caption))} rows={2} placeholder="Add a caption (optional)" aria-label="Caption" disabled={stage === 'submitting'} className="!border-white/10 !bg-white/10 !text-cream placeholder:!text-cream/40" />
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm text-cream/70" role="status">
+                  {status === 'failed' ? <span className="text-[#F2A08F]">{snap?.error}</span>
+                    : status === 'saved' ? <span className="inline-flex items-center gap-1 text-cream"><Check className="size-4 text-amber" /> On the roll</span>
+                    : status === 'committing' ? 'Saving to the roll…'
+                    : `Tucking it away… ${Math.round((snap?.progress ?? 0) * 100)}%`}
+                </p>
+                {!committed && status !== 'failed' && undoLeft > 0 && (
+                  <button onClick={undo} className="relative flex items-center gap-1.5 overflow-hidden rounded-full bg-white/10 px-4 py-2 text-sm font-semibold active:bg-white/20">
+                    <span className="absolute inset-y-0 left-0 bg-white/15" style={{ width: `${(undoLeft / UNDO_SECONDS) * 100}%` }} />
+                    <RotateCcw className="relative size-4" /> <span className="relative">Undo {Math.ceil(undoLeft)}</span>
+                  </button>
+                )}
+              </div>
+              <TextArea value={caption} onChange={(e) => setCaption(e.target.value.slice(0, LIMITS.caption))} rows={2} placeholder="Add a note to this shot (optional)" aria-label="Caption" className="!border-white/10 !bg-white/10 !text-cream placeholder:!text-cream/40" />
               <div className="flex items-center gap-2">
                 <MapPin className="size-5 shrink-0 text-cream/50" />
-                <TextInput value={location} onChange={(e) => setLocation(e.target.value.slice(0, LIMITS.location))} placeholder="Location (optional)" aria-label="Location" disabled={stage === 'submitting'} className="!border-white/10 !bg-white/10 !py-2.5 !text-cream placeholder:!text-cream/40" />
-                {profile?.city && !location && stage === 'confirm' && <button className="shrink-0 rounded-full bg-white/10 px-3 py-2 text-xs font-semibold" onClick={() => setLocation(profile.city)}>{profile.city}</button>}
+                <TextInput value={location} onChange={(e) => setLocation(e.target.value.slice(0, LIMITS.location))} placeholder="Location (optional)" aria-label="Location" className="!border-white/10 !bg-white/10 !py-2.5 !text-cream placeholder:!text-cream/40" />
+                {profile?.city && !location && <button className="shrink-0 rounded-full bg-white/10 px-3 py-2 text-xs font-semibold" onClick={() => setLocation(profile.city)}>{profile.city}</button>}
               </div>
-              {submitError && <p className="rounded-2xl bg-[#B5443A]/90 px-4 py-3 text-sm" role="alert">{submitError}</p>}
-              {stage === 'submitting' ? (
-                <div className="space-y-2 py-2" role="status">
-                  <div className="h-2 overflow-hidden rounded-full bg-white/10">
-                    <motion.div className="h-full bg-coral" animate={{ width: `${Math.max(6, (progress.stage === 'finalizing' || progress.stage === 'done' ? 1 : progress.stage === 'uploading' ? 0.1 + progress.progress * 0.8 : 0.05) * 100)}%` }} />
-                  </div>
-                  <p className="text-center text-sm text-cream/70">
-                    {progress.stage === 'reserving' && 'Advancing the film…'}
-                    {progress.stage === 'uploading' && `Tucking it away… ${Math.round(progress.progress * 100)}%`}
-                    {(progress.stage === 'finalizing' || progress.stage === 'done') && 'Almost there…'}
-                  </p>
-                </div>
+              {status === 'failed' && snap?.lost ? (
+                <Button size="lg" className="w-full" onClick={() => { shot.current = null; setStage(remaining > 0 ? 'camera' : 'last'); }}>Back to the camera</Button>
+              ) : status === 'failed' ? (
+                <Button size="lg" className="w-full" onClick={() => { shot.current?.retry(); void shot.current?.commit(); }}>Try again</Button>
               ) : (
-                <Button size="lg" className="w-full" disabled={!preview} onClick={submit}>{submitError ? 'Try again' : 'Use one exposure'}</Button>
+                <Button size="lg" className="w-full" loading={saving} onClick={done}>Done</Button>
               )}
-              <p className="pb-4 text-center text-xs text-cream/50">Once it’s on the roll, nobody — not even you — sees it until the roll develops.</p>
+              <p className="pb-4 text-center text-xs text-cream/50">No peeking — this shot stays undeveloped until the whole roll does.</p>
             </div>
           </motion.section>
         )}
 
-        {stage === 'done' && (
-          <motion.section key="done" className="flex flex-1 flex-col items-center justify-center gap-6 px-6 pb-safe text-center" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+        {stage === 'last' && (
+          <motion.section key="last" className="flex flex-1 flex-col items-center justify-center gap-6 px-6 pb-safe text-center" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
             <div className="w-full max-w-sm overflow-hidden">
               <motion.div initial={reduce ? false : { x: '40%' }} animate={{ x: '-20%' }} transition={{ duration: 1.2, ease: [0.3, 0.7, 0.2, 1] }}>
                 <FilmStrip className="w-[160%]">
                   <div className="grid grid-cols-6 gap-1.5 py-1">
-                    {Array.from({ length: 6 }, (_, i) => (
-                      <div key={i} className="grid aspect-[4/5] place-items-center rounded-[3px] bg-gradient-to-br from-[#4a2a1a] to-[#1d120c] font-mono text-[10px] text-amber/70">{roll.exposuresUsed + i - 1 > 0 && roll.exposuresUsed + i - 1 <= roll.capacity ? roll.exposuresUsed + i - 1 : ''}</div>
-                    ))}
+                    {Array.from({ length: 6 }, (_, i) => {
+                      const n = roll.capacity - 4 + i;
+                      return <div key={i} className="grid aspect-[4/5] place-items-center rounded-[3px] bg-gradient-to-br from-[#4a2a1a] to-[#1d120c] font-mono text-[10px] text-amber/70">{n > 0 && n <= roll.capacity ? n : ''}</div>;
+                    })}
                   </div>
                 </FilmStrip>
               </motion.div>
             </div>
             <div className="space-y-2">
-              <h2 className="font-display text-3xl">{savedLine}</h2>
-              <p className="text-cream/70">
-                {remainingAfter === 0 || roll.status !== 'active'
-                  ? 'That was the last shot — your roll is off to be developed!'
-                  : remainingAfter != null && remainingAfter <= 8
-                    ? `Only ${remainingAfter} ${remainingAfter === 1 ? 'exposure' : 'exposures'} left.`
-                    : `${remainingAfter ?? remaining} exposures left on ${roll.name}.`}
-              </p>
+              <h2 className="font-display text-3xl">That’s the whole roll!</h2>
+              <p className="text-cream/70">That was the last shot — your film is off to be developed.</p>
             </div>
-            <div className="flex w-full max-w-xs flex-col gap-2">
-              {remainingAfter !== 0 && roll.status === 'active' && <Button size="lg" onClick={() => setStage('camera')}>Take another</Button>}
-              <Button size="lg" variant="ghost" className="!text-cream" onClick={leave}>Back to {group.name}</Button>
-            </div>
+            <Button size="lg" onClick={leave}>Back to {group.name}</Button>
           </motion.section>
         )}
       </AnimatePresence>

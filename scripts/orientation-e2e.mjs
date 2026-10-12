@@ -37,50 +37,55 @@ await p.getByRole('button', { name: 'Load 12 exposures' }).click();
 await p.waitForURL(new RegExp(`/g/${gid}$`));
 
 const live = () => p.waitForFunction(() => { const v = document.querySelector('video'); return v && v.videoWidth > 0 && !v.classList.contains('opacity-0'); }, null, { timeout: 15000 });
-const previewShape = async () => {
-  await p.waitForSelector('img[alt="Your photo with the film effect"]', { timeout: 20000 });
-  return p.evaluate(() => { const i = document.querySelector('img[alt="Your photo with the film effect"]'); return new Promise((r) => (i.complete ? r([i.naturalWidth, i.naturalHeight]) : (i.onload = () => r([i.naturalWidth, i.naturalHeight])))); });
+const wind = async () => {
+  const w = p.getByRole('slider', { name: 'Wind the film' });
+  await w.waitFor();
+  for (let i = 0; i < 10; i++) await w.press('ArrowRight');
+  await p.getByText('ready', { exact: true }).waitFor();
 };
-const submit = async (cap) => {
+/** Shape of the "undeveloped" frame shown after the shutter (follows the shot's orientation). */
+const frameShape = async () => {
+  await p.getByText('undeveloped', { exact: true }).waitFor({ timeout: 20000 });
+  return p.getByText('undeveloped', { exact: true }).evaluate((el) => (el.parentElement.className.includes('aspect-[4/3]') ? 'landscape' : 'portrait'));
+};
+const done = async (cap) => {
   await p.getByLabel('Caption').fill(cap);
-  await p.getByRole('button', { name: 'Use one exposure' }).click();
-  await p.getByRole('button', { name: /Take another|Back to/ }).first().waitFor({ timeout: 30000 });
+  await p.getByRole('button', { name: 'Done' }).click();
+  await p.getByRole('button', { name: /^Take photo/ }).or(p.getByText('That’s the whole roll!')).waitFor({ timeout: 30000 });
 };
 
 // 1) upright
 await p.goto(`${BASE}/camera?g=${gid}`);
 await live();
-await p.getByRole('button', { name: 'Take photo' }).click();
-let [w, h] = await previewShape();
-log(h > w && Math.abs(w / h - 0.75) < 0.02, `upright shot is 3:4 portrait (${w}×${h})`);
-await p.screenshot({ path: `${OUT}/o1-confirm-portrait.png` });
-await submit('Upright');
+await wind();
+await p.getByRole('button', { name: /^Take photo/ }).click();
+log((await frameShape()) === 'portrait', 'upright shot is a portrait frame');
+await p.screenshot({ path: `${OUT}/o1-note-portrait.png` });
+await done('Upright');
 
 // 2) phone turned sideways with the UI still portrait (tilt sensor)
-await p.getByRole('button', { name: 'Take another' }).click();
 await live();
 await p.evaluate(() => window.dispatchEvent(new DeviceOrientationEvent('deviceorientation', { alpha: 0, beta: 4, gamma: -82 })));
 await p.waitForTimeout(400);
+await wind();
 await p.screenshot({ path: `${OUT}/o2-camera-tilted.png` });
 const t = await p.evaluate(() => getComputedStyle(document.querySelector('[aria-label$="exposures left"]')).transform);
 log(t !== 'none' && !t.startsWith('matrix(1, 0'), `controls turn to face the user when sideways (${t})`);
-await p.getByRole('button', { name: 'Take photo' }).click();
-[w, h] = await previewShape();
-log(w > h && Math.abs(w / h - 4 / 3) < 0.02, `sideways shot becomes a 4:3 landscape photo (${w}×${h})`);
-await p.screenshot({ path: `${OUT}/o3-confirm-landscape.png` });
-await submit('Sideways (tilt)');
+await p.getByRole('button', { name: /^Take photo/ }).click();
+log((await frameShape()) === 'landscape', 'sideways shot becomes a landscape frame');
+await p.screenshot({ path: `${OUT}/o3-note-landscape.png` });
+await done('Sideways (tilt)');
 await p.evaluate(() => window.dispatchEvent(new DeviceOrientationEvent('deviceorientation', { alpha: 0, beta: 85, gamma: 3 })));
 
 // 3) the browser rotates the whole UI to landscape
 await p.setViewportSize({ width: 844, height: 390 });
-await p.getByRole('button', { name: 'Take another' }).click();
 await live();
-await p.waitForTimeout(400);
+await wind();
+await p.waitForTimeout(300);
 await p.screenshot({ path: `${OUT}/o4-camera-landscape-ui.png` });
-await p.getByRole('button', { name: 'Take photo' }).click();
-[w, h] = await previewShape();
-log(w > h && Math.abs(w / h - 4 / 3) < 0.02, `landscape-UI shot is 4:3 (${w}×${h})`);
-await submit('Landscape UI');
+await p.getByRole('button', { name: /^Take photo/ }).click();
+log((await frameShape()) === 'landscape', 'landscape-UI shot is a landscape frame');
+await done('Landscape UI');
 await p.setViewportSize({ width: 390, height: 664 });
 
 // fill the roll: mix of portrait/landscape through the phone-camera input
@@ -99,9 +104,9 @@ const files = await p.evaluate(async () => {
   return out;
 });
 for (let i = 0; i < 9; i++) {
-  await p.getByRole('button', { name: 'Take another' }).click();
+  await wind();
   await p.locator('input[type=file][capture]').setInputFiles({ name: `s${i}.jpg`, mimeType: 'image/jpeg', buffer: Buffer.from(files[i]) });
-  await submit(`Mixed ${i}`);
+  await done(`Mixed ${i}`);
 }
 log(true, 'roll filled with mixed orientations');
 

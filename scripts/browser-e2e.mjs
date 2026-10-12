@@ -81,12 +81,26 @@ async function makePhotos(page, n) {
   return datas.map((d, i) => ({ name: `photo-${i}.jpg`, mimeType: 'image/jpeg', buffer: Buffer.from(d) }));
 }
 
-async function confirmShot(page, caption) {
+/** Wind the film-advance wheel (keyboard path: one notch per key press). */
+async function wind(page) {
+  const w = page.getByRole('slider', { name: 'Wind the film' });
+  await w.waitFor();
+  for (let i = 0; i < 10; i++) await w.press('ArrowRight');
+  await page.getByText('ready', { exact: true }).waitFor();
+}
+
+/** After the shutter: add a note, tap Done, wait to be back at the camera (or the end-of-roll screen). */
+async function noteAndDone(page, caption) {
   await page.getByLabel('Caption').fill(caption);
-  await page.getByRole('button', { name: 'Use one exposure' }).waitFor();
-  await page.waitForSelector('img[alt="Your photo with the film effect"]', { timeout: 20000 });
-  await page.getByRole('button', { name: 'Use one exposure' }).click();
-  await page.getByRole('button', { name: /Take another|Back to/ }).first().waitFor({ timeout: 30000 });
+  await page.getByRole('button', { name: 'Done' }).click();
+  await page.getByRole('button', { name: /^Take photo/ }).or(page.getByText('That’s the whole roll!')).waitFor({ timeout: 30000 });
+}
+
+/** Wind, then take a shot through the phone-camera fallback input. */
+async function shootFile(page, file, caption) {
+  await wind(page);
+  await page.locator('input[type=file][capture]').setInputFiles(file);
+  await noteAndDone(page, caption);
 }
 
 try {
@@ -139,24 +153,35 @@ try {
     const v = document.querySelector('video');
     return v && v.videoWidth > 0 && !v.classList.contains('opacity-0');
   }, null, { timeout: 15000 });
-  await shot(alice.page, '06-camera');
-  await alice.page.getByRole('button', { name: 'Take photo' }).click();
-  await alice.page.getByLabel('Caption').waitFor();
-  await alice.page.waitForSelector('img[alt="Your photo with the film effect"]', { timeout: 20000 });
-  await shot(alice.page, '07-confirm');
-  await alice.page.getByLabel('Caption').fill('Morning coffee before work');
-  await alice.page.getByRole('button', { name: 'Use one exposure' }).click();
-  await alice.page.getByRole('button', { name: 'Take another' }).waitFor({ timeout: 30000 });
-  await shot(alice.page, '08-captured');
-  log(await alice.page.getByText(/11 exposures left/).isVisible(), 'exposure counter shows 11 left');
+  await shot(alice.page, '06-camera-unwound');
+  // the shutter won't fire until the film is wound
+  await alice.page.getByRole('button', { name: /^Take photo/ }).click();
+  await alice.page.getByText('Wind the film first').waitFor();
+  log(!(await alice.page.getByLabel('Caption').isVisible()), 'shutter refuses to fire before winding');
+  await wind(alice.page);
+  await shot(alice.page, '06b-camera-wound');
+
+  // undo inside the window gives the exposure back and keeps the film wound
+  await alice.page.getByRole('button', { name: /^Take photo/ }).click();
+  await alice.page.getByRole('button', { name: /^Undo/ }).click();
+  await alice.page.getByText('Shot discarded').waitFor();
+  const undone = await Promise.all([alice.page.getByText('ready', { exact: true }).waitFor({ timeout: 5000 }), alice.page.getByLabel('12 exposures left').waitFor({ timeout: 5000 })]).then(() => true, () => false);
+  log(undone, 'undo discards the shot, keeps 12 left and the film wound');
+  await alice.page.waitForFunction(() => { const v = document.querySelector('video'); return v && v.videoWidth > 0 && !v.classList.contains('opacity-0'); }, null, { timeout: 15000 });
+
+  // the real first shot: no preview, just an undeveloped frame + optional note
+  await alice.page.getByRole('button', { name: /^Take photo/ }).click();
+  await alice.page.getByText('undeveloped', { exact: true }).waitFor();
+  log((await alice.page.locator('img[alt="Your photo with the film effect"]').count()) === 0, 'no preview after the shutter');
+  await shot(alice.page, '07-note');
+  await noteAndDone(alice.page, 'Morning coffee before work');
+  await alice.page.getByLabel('11 exposures left').waitFor({ timeout: 15000 });
+  await shot(alice.page, '08-back-to-camera');
+  log(true, 'exposure counter shows 11 left and the film needs winding again');
 
   // more shots through the phone-camera fallback input (fresh files)
   const photos = await makePhotos(alice.page, 11);
-  for (let i = 0; i < 5; i++) {
-    await alice.page.getByRole('button', { name: 'Take another' }).click();
-    await alice.page.locator('input[type=file][capture]').setInputFiles(photos[i]);
-    await confirmShot(alice.page, `Alice frame ${i + 2}`);
-  }
+  for (let i = 0; i < 5; i++) await shootFile(alice.page, photos[i], `Alice frame ${i + 2}`);
   log(true, 'alice added 6 photos');
 
   console.log('Before development, nothing is visible');
@@ -177,11 +202,7 @@ try {
 
   console.log('Bob shoots the last 6 (phone-camera fallback input)');
   await bob.page.goto(`${BASE}/camera?g=${gid}`);
-  for (let i = 0; i < 6; i++) {
-    if (i > 0) await bob.page.getByRole('button', { name: 'Take another' }).click();
-    await bob.page.locator('input[type=file][capture]').setInputFiles(photos[5 + i] ?? photos[0]);
-    await confirmShot(bob.page, `Bob frame ${i + 1}`);
-  }
+  for (let i = 0; i < 6; i++) await shootFile(bob.page, photos[5 + i] ?? photos[0], `Bob frame ${i + 1}`);
   await bob.page.getByText(/last shot/).waitFor();
   await shot(bob.page, '10-last-shot');
   log(true, 'roll filled and sent to develop');

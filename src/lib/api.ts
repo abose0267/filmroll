@@ -29,6 +29,7 @@ export const api = {
     { groupId: string; rollId: string; reservationId: string; caption: string; location: string; capturedAt: number; clientNow: number; preset: PresetId; sizes: { original: Size; display: Size; thumb: Size } },
     { photoId: string; duplicate: boolean; remaining: number; status: string }
   >('finalizeExposure'),
+  setPhotoNote: fn<{ groupId: string; rollId: string; photoId: string; caption: string; location: string }, { ok: true }>('setPhotoNote'),
   deleteAccount: fn<{ confirm: 'DELETE' }, { photos: number; groups: number }>('deleteAccount'),
 };
 

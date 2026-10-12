@@ -43,6 +43,13 @@ export function playAdvance() {
   for (let i = 0; i < 5; i++) burst(c, t + i * 0.045, 0.02, 2400 + i * 120, 0.25);
 }
 
+/** A single soft click for each notch of the film-advance wheel. */
+export function playTick() {
+  const c = ac();
+  if (!c) return;
+  burst(c, c.currentTime, 0.012, 2800, 0.22);
+}
+
 export function vibrate(ms: number | number[]) {
   try {
     navigator.vibrate?.(ms);

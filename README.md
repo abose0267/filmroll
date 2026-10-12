@@ -64,6 +64,7 @@ The uploader gets confirmation and an updated exposure count, but can't reopen t
 | Member leaves before development | Their photos stay on the roll and are revealed; they lose access. |
 | Member joins after development | Sees past rolls unless the group turns off "New members see past rolls". |
 | Nobody shot anything | The roll develops on its date as an empty album with a prompt to start a new one. |
+| Taking a shot | Wind the film-advance wheel (drag, scroll, tap or arrow keys) to unlock the shutter. The shutter is final: there's no preview. A 3-second **Undo** gives the exposure back; after that the shot is saved, even if the app is closed. An optional note (caption/location) can be added on the next screen, or edited until the roll develops (`setPhotoNote`). |
 | Phone held sideways | The tilt sensor turns the controls to face you and saves an upright 4:3 landscape photo (on iOS, tilt is enabled by the first tap on the camera screen). If the browser rotates the whole screen, the camera switches to a side-by-side layout. Photos keep their own shape in albums. |
 | Camera unavailable or permission denied | Falls back to the phone's own camera (`capture=environment`). There is no photo-library picker: the fallback only accepts a file created in the last 5 minutes, and the server rejects any photo submitted more than 30 minutes after it was taken. |
 | Account deletion | Removes your photos (exposures on live rolls are given back), comments, reactions, favorites and notifications, transfers ownership of your groups, then deletes your auth account. |
@@ -104,7 +105,7 @@ node scripts/browser-e2e.mjs http://localhost:5173 e2e-screens   # mobile UI wal
 node scripts/orientation-e2e.mjs e2e-screens   # upright / sideways / rotated-screen shots (needs `npm run dev:phone -- --port 5180`)
 ```
 
-`test:e2e` covers: invites; rejecting old photos; idempotent reservations; finalizing twice; rejecting non-image bytes; privacy before development (Firestore and the photo endpoint, including the uploader); 6 people racing for the last 3 exposures; automatic development when full; scheduled development with an upload in flight; empty rolls; cancelling; leaving and rejoining; history visibility; invite rotation; account deletion.
+`test:e2e` covers: invites; rejecting old photos; editing a shot's note before (not after) development; idempotent reservations; finalizing twice; rejecting non-image bytes; privacy before development (Firestore and the photo endpoint, including the uploader); 6 people racing for the last 3 exposures; automatic development when full; scheduled development with an upload in flight; empty rolls; cancelling; leaving and rejoining; history visibility; invite rotation; account deletion.
 
 `browser-e2e.mjs` drives two phone-sized users through the whole app in Chrome with a fake camera: sign-up, onboarding, creating a group, joining by invite, loading a roll, camera and gallery shots, the reveal, the album, the viewer, reactions, comments, notifications and reduced motion.
 
