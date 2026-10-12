@@ -5,9 +5,12 @@ import { FieldValue, db, groupRef, inviteRef, memberRef, membersCol, userRef, bu
 import { REGION } from './config';
 import { HOUR, DAY, docId, newId, rateLimit, requireAdmin, requireAuth, requireMember } from './util';
 import { notify } from './notify';
-import { GROUP_THEMES, LIMITS, MAX_GROUPS_PER_USER, MAX_GROUP_MEMBERS, MEMBER_PREVIEW_SIZE } from '@shared/constants';
+import { CAPACITIES, GROUP_THEMES, LIMITS, MAX_GROUPS_PER_USER, MAX_GROUP_MEMBERS, MEMBER_PREVIEW_SIZE } from '@shared/constants';
+import { isPresetId } from '@shared/presets';
+import { isValidTimeZone } from '@shared/time';
+import { maybeLoadMonthlyRoll } from './rolls';
 import { cleanText, groupNameError, inviteCodeFromBytes, normalizeInviteCode } from '@shared/validation';
-import type { GroupDoc, GroupInviteDoc, GroupSettings, GroupTheme, MemberDoc, MemberRole, UserDoc } from '@shared/types';
+import type { AutoRollSettings, GroupDoc, GroupInviteDoc, GroupSettings, GroupTheme, MemberDoc, MemberRole, UserDoc } from '@shared/types';
 import type { Transaction } from 'firebase-admin/firestore';
 
 const opts = { region: REGION };
@@ -204,9 +207,23 @@ export const updateGroup = onCall(opts, async (req) => {
     update['settings.rollCreators'] = s.rollCreators;
   }
   if (s?.shareHistory !== undefined) update['settings.shareHistory'] = Boolean(s.shareHistory);
+  let autoOn = false;
+  if (s?.autoRoll !== undefined) {
+    const a = s.autoRoll as Partial<AutoRollSettings>;
+    if (!a || typeof a.enabled !== 'boolean') throw new HttpsError('invalid-argument', 'Invalid monthly roll setting.');
+    if (a.enabled) {
+      if (!(CAPACITIES as readonly number[]).includes(Number(a.capacity))) throw new HttpsError('invalid-argument', 'Choose 12, 24 or 36 exposures.');
+      if (!isPresetId(a.preset)) throw new HttpsError('invalid-argument', 'Choose a film.');
+      if (!isValidTimeZone(a.timeZone)) throw new HttpsError('invalid-argument', 'Unknown time zone.');
+      update['settings.autoRoll'] = { enabled: true, capacity: Number(a.capacity) as AutoRollSettings['capacity'], preset: a.preset, timeZone: a.timeZone } satisfies AutoRollSettings;
+      autoOn = true;
+    } else update['settings.autoRoll.enabled'] = false;
+  }
   if (!Object.keys(update).length) return { ok: true };
   await groupRef(gid).update(update);
-  return { ok: true };
+  // Switched on mid-month with no roll loaded: start this month's roll now.
+  const rollId = autoOn ? await maybeLoadMonthlyRoll(gid, Date.now(), { midMonth: true }) : null;
+  return { ok: true, rollId };
 });
 
 /** Any member can share the current invite; only admins can rotate it. */

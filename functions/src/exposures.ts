@@ -18,7 +18,7 @@ import { REGION } from './config';
 import { HOUR, docId, newId, rateLimit, requireAuth, requireMember } from './util';
 import { advanceRoll } from './develop';
 import { notify, memberIds } from './notify';
-import { CAPTURE_MAX_AGE_MS, LIMITS, MAX_PENDING_PER_USER, RESERVATION_TTL_MS } from '@shared/constants';
+import { CAPTURE_MAX_AGE_MS, QUEUED_MAX_AGE_MS, LIMITS, MAX_PENDING_PER_USER, RESERVATION_TTL_MS } from '@shared/constants';
 import { acceptsFinalization, newMilestones, reserveDenial, shotsRemaining } from '@shared/rolls';
 import { isPresetId } from '@shared/presets';
 import { cleanText, sniffImage } from '@shared/validation';
@@ -131,7 +131,9 @@ export const finalizeExposure = onCall(shotOpts, async (req) => {
   const clientNowRaw = Number(req.data?.clientNow);
   const clientNow = Number.isFinite(clientNowRaw) ? clientNowRaw : now;
   const age = clientNow - capturedAtRaw;
-  if (!Number.isFinite(capturedAtRaw) || age > CAPTURE_MAX_AGE_MS || age < -60_000) {
+  // Shots that waited in the phone's offline queue may be older (up to QUEUED_MAX_AGE_MS).
+  const maxAge = req.data?.queued === true ? QUEUED_MAX_AGE_MS : CAPTURE_MAX_AGE_MS;
+  if (!Number.isFinite(capturedAtRaw) || age > maxAge || age < -60_000) {
     throw new HttpsError('failed-precondition', 'Only photos taken just now can go on the roll. Take a new one!');
   }
   const capturedAt = now - Math.max(0, age);

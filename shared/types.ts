@@ -36,11 +36,21 @@ export interface UserDoc {
   tutorialDone?: boolean;
 }
 
+export interface AutoRollSettings {
+  enabled: boolean;
+  capacity: 12 | 24 | 36;
+  preset: PresetId;
+  /** The group's home time zone: rolls load on the 1st and develop on the last evening of the month here. */
+  timeZone: string;
+}
+
 export interface GroupSettings {
   /** Who may start a new roll. */
   rollCreators: 'everyone' | 'admins';
   /** New members can see rolls developed before they joined. */
   shareHistory: boolean;
+  /** Load a new roll automatically every month. */
+  autoRoll?: AutoRollSettings;
 }
 
 export interface GroupDoc {
@@ -53,6 +63,8 @@ export interface GroupDoc {
   /** Small public-to-members summary for avatars; capped. */
   memberPreview: { uid: string; name: string; photoURL: string | null }[];
   activeRollId: string | null;
+  /** "YYYY-MM" of the last month the monthly roll was handled (server-only bookkeeping). */
+  autoRollMonth?: string;
   rollCount: number;
   developedCount: number;
   settings: GroupSettings;

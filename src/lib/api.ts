@@ -16,7 +16,7 @@ export const api = {
   leaveGroup: fn<{ groupId: string }, { outcome: string }>('leaveGroup'),
   removeMember: fn<{ groupId: string; uid: string }, { ok: true }>('removeMember'),
   setMemberRole: fn<{ groupId: string; uid: string; role: Exclude<MemberRole, 'owner'> }, { ok: true }>('setMemberRole'),
-  updateGroup: fn<{ groupId: string; name?: string; theme?: GroupTheme; settings?: Partial<GroupSettings> }, { ok: true }>('updateGroup'),
+  updateGroup: fn<{ groupId: string; name?: string; theme?: GroupTheme; settings?: Partial<GroupSettings> }, { ok: true; rollId?: string | null }>('updateGroup'),
   getInvite: fn<{ groupId: string }, { code: string }>('getInvite'),
   rotateInvite: fn<{ groupId: string }, { code: string }>('rotateInvite'),
   setGroupMute: fn<{ groupId: string; muted: boolean }, { ok: true }>('setGroupMute'),
@@ -26,7 +26,7 @@ export const api = {
   reserveExposure: fn<{ groupId: string; rollId: string; requestId: string }, { reservationId: string; expiresAt: number; uploadPrefix: string }>('reserveExposure'),
   releaseExposure: fn<{ groupId: string; rollId: string; reservationId: string }, { released: boolean }>('releaseExposure'),
   finalizeExposure: fn<
-    { groupId: string; rollId: string; reservationId: string; caption: string; location: string; capturedAt: number; clientNow: number; preset: PresetId; sizes: { original: Size; display: Size; thumb: Size } },
+    { groupId: string; rollId: string; reservationId: string; caption: string; location: string; capturedAt: number; clientNow: number; preset: PresetId; queued?: boolean; sizes: { original: Size; display: Size; thumb: Size } },
     { photoId: string; duplicate: boolean; remaining: number; status: string }
   >('finalizeExposure'),
   setPhotoNote: fn<{ groupId: string; rollId: string; photoId: string; caption: string; location: string }, { ok: true }>('setPhotoNote'),

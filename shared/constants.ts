@@ -25,6 +25,8 @@ export const DEVELOPING_GRACE_MS = RESERVATION_TTL_MS;
  * photos can't be added.
  */
 export const CAPTURE_MAX_AGE_MS = 30 * 60 * 1000;
+/** Shots taken offline wait on the phone; they may be this old when they finally upload. */
+export const QUEUED_MAX_AGE_MS = 72 * 60 * 60 * 1000;
 /** The phone-camera fallback must hand back a file this new. */
 export const FALLBACK_FILE_MAX_AGE_MS = 5 * 60 * 1000;
 /** Earliest/latest allowed scheduled development, relative to roll start. */

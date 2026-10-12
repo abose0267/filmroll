@@ -9,9 +9,10 @@ import { storage } from './firebase';
 import { api, errorCode, errorMessage } from './api';
 import { processPhoto, type ProcessedPhoto } from './image';
 import { randomRequestId } from './format';
+import { enqueue, isNetworkError } from './queue';
 import type { PresetId } from '@shared/types';
 
-export type ShotState = 'working' | 'uploaded' | 'committing' | 'saved' | 'cancelled' | 'failed';
+export type ShotState = 'working' | 'uploaded' | 'committing' | 'saved' | 'queued' | 'cancelled' | 'failed';
 
 export interface ShotSnapshot {
   state: ShotState;
@@ -25,13 +26,23 @@ export interface ShotSnapshot {
 }
 
 interface Options {
+  uid: string;
   groupId: string;
   rollId: string;
   preset: PresetId;
   dateStamp: boolean;
-  seed: number;
+  seed?: number;
   capturedAt: number;
-  source: ImageBitmap;
+  /** Raw capture (processed in the pipeline)… */
+  source?: ImageBitmap;
+  /** …or an already-processed shot (from the offline queue). */
+  processed?: ProcessedPhoto;
+  /** Reuse a request id so retries keep the same exposure reservation. */
+  requestId?: string;
+  /** No connection: process now, keep on the device at commit. */
+  offline?: boolean;
+  /** Uploading a shot that waited in the offline queue (server allows an older capture time). */
+  queued?: boolean;
   onChange: (s: ShotSnapshot) => void;
 }
 
@@ -49,6 +60,8 @@ export class Shot {
 
   constructor(o: Options) {
     this.o = o;
+    if (o.processed) this.processed = o.processed;
+    if (o.requestId) this.requestId = o.requestId;
   }
 
   get snapshot() {
@@ -69,19 +82,26 @@ export class Shot {
   private async run() {
     this.set({ state: 'working', error: null });
     const t0 = performance.now();
-    // Reserve the exposure while the photo is still being processed.
-    const reserving = this.reservation ? Promise.resolve(this.reservation) : api.reserveExposure({ groupId: this.o.groupId, rollId: this.o.rollId, requestId: this.requestId });
-    reserving.catch(() => undefined); // surfaced below
-    if (!this.processed) {
-      this.processed = await processPhoto(this.o.source, { preset: this.o.preset, seed: this.o.seed, dateStamp: this.o.dateStamp, capturedAt: this.o.capturedAt });
+    // Reserve the exposure while the photo is still being processed (not possible offline).
+    const reserving = this.o.offline ? null : this.reservation ? Promise.resolve(this.reservation) : api.reserveExposure({ groupId: this.o.groupId, rollId: this.o.rollId, requestId: this.requestId });
+    reserving?.catch(() => undefined); // surfaced below
+    if (!this.processed && this.o.source) {
+      this.processed = await processPhoto(this.o.source, { preset: this.o.preset, seed: this.o.seed ?? 7, dateStamp: this.o.dateStamp, capturedAt: this.o.capturedAt });
       this.o.source.close(); // the original pixels are no longer needed; nobody sees the shot until it develops
+    }
+    if (!reserving) {
+      // offline: the shot is ready to be kept on the device when committed
+      if (!this.isCancelled()) this.set({ state: 'uploaded', progress: 1 });
+      return;
     }
     const t1 = performance.now();
     this.reservation = await reserving;
     const t2 = performance.now();
     if (this.isCancelled()) return this.release();
     const prefix = this.reservation.uploadPrefix;
-    const parts = [['thumb', this.processed.thumb.blob], ['display', this.processed.display.blob], ['original', this.processed.original.blob]] as const;
+    const ph = this.processed;
+    if (!ph) throw new Error('Nothing to upload.');
+    const parts = [['thumb', ph.thumb.blob], ['display', ph.display.blob], ['original', ph.original.blob]] as const;
     const total = parts.reduce((s, [, b]) => s + b.size, 0);
     const sent: Record<string, number> = {};
     // All three files upload in parallel, each with its own retries.
@@ -120,6 +140,7 @@ export class Shot {
     if (this.isCancelled()) return;
     const code = errorCode(e);
     const msg = errorMessage(e);
+    this.lastErr = { code, message: (e as Error)?.message ?? msg };
     if (code === 'functions/deadline-exceeded') this.reset(); // reservation expired: start over with a fresh exposure
     const lost = (code === 'functions/resource-exhausted' && /No exposures left/.test(msg)) || (code === 'functions/failed-precondition' && /developed|isn.t taking/i.test(msg));
     this.set({ state: 'failed', error: lost ? 'Someone just took the last shot, so this one didn’t make it onto the roll.' : msg, lost });
@@ -159,6 +180,7 @@ export class Shot {
         this.commitP = null;
         return;
       }
+      if (this.o.offline) return this.toQueue();
       this.set({ state: 'committing' });
       const p = this.processed!;
       const size = (k: keyof ProcessedPhoto) => ({ width: p[k].width, height: p[k].height });
@@ -166,7 +188,7 @@ export class Shot {
         const tf = performance.now();
         const out = await api.finalizeExposure({
           groupId: this.o.groupId, rollId: this.o.rollId, reservationId: this.reservation!.reservationId,
-          caption: this.note.caption, location: this.note.location, capturedAt: this.o.capturedAt, clientNow: Date.now(), preset: this.o.preset,
+          caption: this.note.caption, location: this.note.location, capturedAt: this.o.capturedAt, clientNow: Date.now(), preset: this.o.preset, queued: !!this.o.queued,
           sizes: { original: size('original'), display: size('display'), thumb: size('thumb') },
         });
         this.timings.finalize = performance.now() - tf;
@@ -188,6 +210,24 @@ export class Shot {
     if (this.note.caption === this.savedNote.caption && this.note.location === this.savedNote.location) return;
     await api.setPhotoNote({ groupId: this.o.groupId, rollId: this.o.rollId, photoId: this.snap.photoId, ...this.note });
     this.savedNote = { ...this.note };
+  }
+
+  /** True when the last failure was a lost connection (worth keeping on the device). */
+  get networkFailure() {
+    return this.snap.state === 'failed' && !this.snap.lost && this.lastErr != null && isNetworkError(this.lastErr.code, this.lastErr.message);
+  }
+  private lastErr: { code: string; message: string } | null = null;
+
+  /** Keep the processed shot on this device; it uploads when the connection is back. */
+  async toQueue(): Promise<void> {
+    if (!this.processed || this.snap.state === 'saved' || this.snap.state === 'queued') return;
+    this.tasks.forEach((t) => t.cancel());
+    await enqueue({
+      id: this.requestId, uid: this.o.uid, groupId: this.o.groupId, rollId: this.o.rollId, preset: this.o.preset, capturedAt: this.o.capturedAt,
+      caption: this.note.caption, location: this.note.location, requestId: this.requestId, photo: this.processed, queuedAt: Date.now(), attempts: 0,
+    });
+    this.processed = null;
+    this.set({ state: 'queued', error: null });
   }
 
   /** Retry after a failure (keeps the processed photo and any live reservation). */

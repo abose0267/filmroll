@@ -9,6 +9,7 @@ import { DisposableCamera, FilmStrip } from '@/components/film';
 import { errorMessage } from '@/lib/api';
 import { decode } from '@/lib/image';
 import { Shot, type ShotSnapshot } from '@/lib/shot';
+import { useQueue } from '@/lib/queue';
 import { WindWheel } from '@/components/WindWheel';
 import { cropToAspect, rotatedSize, rotationFor, useDeviceTilt, useViewportLandscape } from '@/lib/orientation';
 import { playShutter, vibrate } from '@/lib/sound';
@@ -128,7 +129,8 @@ function Camera({ roll, group }: { roll: RollDoc; group: GroupDoc }) {
   const reduce = useReducedMotion();
   const online = useOnline();
   useStatusBarColor('#2E2B29');
-  const { profile } = useAuth();
+  const { user, profile } = useAuth();
+  const queued = useQueue(user?.uid);
   const video = useRef<HTMLVideoElement>(null);
   const stream = useRef<MediaStream | null>(null);
   const nativeInput = useRef<HTMLInputElement>(null);
@@ -169,8 +171,10 @@ function Camera({ roll, group }: { roll: RollDoc; group: GroupDoc }) {
     return () => removeEventListener('beforeunload', warn);
   }, [pendingSaves]);
 
-  // Count shots still saving as used, so the counter is right immediately.
-  const remaining = Math.max(0, shotsRemaining(roll) - pendingSaves);
+  // Count shots still saving or waiting offline as used, so the counter is right immediately.
+  const waiting = queued.filter((q) => q.rollId === roll.id).length;
+  const remaining = Math.max(0, shotsRemaining(roll) - pendingSaves - waiting);
+  const [offlineShot, setOfflineShot] = useState(false);
 
   // Orientation: if the browser rotates the UI we switch to a side-by-side layout;
   // if the UI stays portrait (installed app, rotation lock) the tilt sensor tells us
@@ -262,7 +266,9 @@ function Camera({ roll, group }: { roll: RollDoc; group: GroupDoc }) {
     setFrameNo(roll.exposuresUsed + pendingSaves + 1);
     setCaption('');
     setLocation('');
-    const s = new Shot({ groupId: roll.groupId, rollId: roll.id, preset: roll.preset, dateStamp: roll.dateStamp, seed: seedFrom(randomRequestId()), capturedAt: at, source: b, onChange: setSnap });
+    const offline = !navigator.onLine;
+    setOfflineShot(offline);
+    const s = new Shot({ uid: user!.uid, groupId: roll.groupId, rollId: roll.id, preset: roll.preset, dateStamp: roll.dateStamp, seed: seedFrom(randomRequestId()), capturedAt: at, source: b, offline, onChange: setSnap });
     shot.current = s;
     setSnap(s.snapshot);
     void s.start();
@@ -273,7 +279,6 @@ function Camera({ roll, group }: { roll: RollDoc; group: GroupDoc }) {
   function shutterPressed() {
     if (stage !== 'camera') return;
     if (remaining <= 0 || roll.status !== 'active') return toast('No exposures left on this roll.');
-    if (!online) return toast('You’re offline — connect to save a shot.', 'error');
     if (!wound) {
       setNudge((n) => n + 1);
       vibrate([8, 40, 8]);
@@ -354,7 +359,13 @@ function Camera({ roll, group }: { roll: RollDoc; group: GroupDoc }) {
           s.retry();
         }
         await s.commit();
+        if (s.networkFailure) await s.toQueue(); // no connection: keep it on the phone
         const snap = s.snapshot;
+        if (snap.state === 'queued') {
+          uncount(); // now counted as "waiting"
+          toast('No connection — your shot is saved on this phone and will upload when you’re back online.');
+          return;
+        }
         if (snap.state === 'saved') {
           uncount(); // the roll itself now counts this shot
           await s.saveNote().catch((e) => toast(`Your shot is saved, but its note wasn’t: ${errorMessage(e)}`, 'error'));
@@ -405,9 +416,16 @@ function Camera({ roll, group }: { roll: RollDoc; group: GroupDoc }) {
         </div>
         <div className="relative grid h-9 min-w-14 place-items-center rounded-lg bg-black px-2 font-mono text-lg text-amber shadow-inner" style={turn} aria-label={`${remaining} exposures left${pendingSaves ? `, saving ${pendingSaves}` : ''}`}>
           {String(remaining).padStart(2, '0')}
-          {pendingSaves > 0 && <span className="absolute -right-1 -top-1 size-2.5 animate-pulse rounded-full bg-coral ring-2 ring-body" title="Saving in the background" />}
+          {(pendingSaves > 0 || waiting > 0) && <span className="absolute -right-1 -top-1 size-2.5 animate-pulse rounded-full bg-coral ring-2 ring-body" title="Saving in the background" />}
         </div>
       </div>
+      {(waiting > 0 || !online) && (
+        <p className="mx-auto mt-1 rounded-full bg-white/10 px-3 py-1 text-center text-xs text-cream/80" role="status">
+          {!online ? 'Offline — shots will wait on your phone' : null}
+          {!online && waiting > 0 ? ' · ' : null}
+          {waiting > 0 ? `${waiting} waiting to upload` : null}
+        </p>
+      )}
 
       <AnimatePresence mode="wait">
         {stage === 'camera' && (
@@ -510,7 +528,8 @@ function Camera({ roll, group }: { roll: RollDoc; group: GroupDoc }) {
             <div className="mx-auto w-full max-w-md space-y-3 px-5 pb-safe pt-5">
               <div className="flex items-center justify-between gap-3">
                 <p className="text-sm text-cream/70" role="status">
-                  {status === 'failed' ? <span className="text-[#F2A08F]">{snap?.error}</span>
+                  {offlineShot && status !== 'failed' ? 'Offline — it’ll wait on your phone and upload later'
+                    : status === 'failed' ? <span className="text-[#F2A08F]">{snap?.error}</span>
                     : status === 'saved' ? <span className="inline-flex items-center gap-1 text-cream"><Check className="size-4 text-amber" /> On the roll</span>
                     : status === 'committing' ? 'Saving to the roll…'
                     : `Tucking it away… ${Math.round((snap?.progress ?? 0) * 100)}%`}

@@ -205,7 +205,23 @@ try {
 
   // more shots through the phone-camera fallback input (fresh files)
   const photos = await makePhotos(alice.page, 11);
-  for (let i = 0; i < 5; i++) await shootFile(alice.page, photos[i], `Alice frame ${i + 2}`);
+  // offline: the shot waits on the phone and uploads by itself when the connection returns
+  console.log('Offline shot');
+  await alice.ctx.setOffline(true);
+  await alice.page.getByText('Offline — shots will wait on your phone').waitFor();
+  await wind(alice.page);
+  await alice.page.getByRole('button', { name: /^Take photo/ }).click();
+  await alice.page.getByText(/Offline — it’ll wait on your phone/).waitFor();
+  await noteAndDone(alice.page, 'Alice frame 2');
+  await alice.page.getByText(/1 waiting to upload/).waitFor({ timeout: 20000 });
+  log(await alice.page.getByLabel('10 exposures left').count() > 0, 'offline: shot kept on the phone and already counted');
+  await shot(alice.page, '08c-offline-waiting');
+  await alice.ctx.setOffline(false);
+  await alice.page.getByText(/waiting to upload/).waitFor({ state: 'detached', timeout: 60000 });
+  await alice.page.getByText(/offline shot is on the roll now/).waitFor({ timeout: 10000 });
+  log(true, 'back online: the waiting shot uploaded by itself');
+
+  for (let i = 1; i < 5; i++) await shootFile(alice.page, photos[i], `Alice frame ${i + 2}`);
   await savesSettled(alice.page);
   log(true, 'alice added 6 photos (Done returned to the camera immediately; saves finished in the background)');
 

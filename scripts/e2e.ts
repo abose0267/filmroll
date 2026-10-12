@@ -11,7 +11,9 @@ import { collection, connectFirestoreEmulator, doc, getDoc, getDocs, getFirestor
 import { connectFunctionsEmulator, getFunctions, httpsCallable, type Functions } from 'firebase/functions';
 import { connectStorageEmulator, getStorage, ref, uploadBytes, type FirebaseStorage } from 'firebase/storage';
 import { runSweep } from '../functions/src/sweep';
-import { rollRef } from '../functions/src/admin';
+import { groupRef, rollRef } from '../functions/src/admin';
+import { runMonthlyRolls } from '../functions/src/rolls';
+import { endOfMonthEvening, monthName, zonedParts, zonedTimeToUtc, daysInMonth } from '../shared/time';
 import { DEFAULT_NOTIFICATION_PREFS, RESERVATION_TTL_MS } from '../shared/constants';
 import type { RollDoc } from '../shared/types';
 
@@ -241,6 +243,39 @@ async function main() {
   const r1Photos = await getDocs(collection(alice.db, 'groups', gid, 'rolls', r1, 'photos'));
   check(r1Photos.docs.every((d) => d.data().uid !== bob.uid), 'deleted user’s photos are removed from albums');
   check((await getDocs(collection(alice.db, 'groups', gid, 'rolls', r1, 'comments'))).size === 0, 'deleted user’s comments are removed');
+
+  console.log('\nMonthly roll');
+  {
+    const tz = 'America/Chicago';
+    const { groupId: mg } = await call<{ groupId: string }>(alice, 'createGroup', { name: 'Monthly Club', theme: 'sage' });
+    const t0 = Date.now();
+    const p0 = zonedParts(t0, tz);
+    const daysLeft = daysInMonth(p0.y, p0.m) - p0.d;
+    const on = await call<{ rollId: string | null }>(alice, 'updateGroup', { groupId: mg, settings: { autoRoll: { enabled: true, capacity: 12, preset: 'softPastel', timeZone: tz } } });
+    if (daysLeft >= 3) {
+      const r0 = (await getDoc(doc(alice.db, 'groups', mg, 'rolls', on.rollId!))).data() as RollDoc;
+      check(r0.name === monthName(t0, tz) && r0.developAt === endOfMonthEvening(t0, tz) && r0.capacity === 12 && r0.preset === 'softPastel' && r0.developMode === 'either', `switching it on mid-month loads “${r0.name}”, developing on the month’s last evening`);
+    } else check(on.rollId == null, 'switching it on in the last days of the month waits for the 1st');
+    await rejects(call(bob, 'updateGroup', { groupId: mg, settings: { autoRoll: { enabled: true, capacity: 12, preset: 'classic35', timeZone: tz } } }), /permission|admins|not a member/i, 'only admins can change the monthly roll');
+    // develop this month's roll, then jump to 10am on the 1st of next month
+    if (on.rollId) {
+      await rollRef(mg, on.rollId).update({ status: 'developed', developedAt: Date.now() });
+      await groupRef(mg).update({ activeRollId: null });
+    }
+    const nextMonth = p0.m === 12 ? { y: p0.y + 1, m: 1 } : { y: p0.y, m: p0.m + 1 };
+    const first = zonedTimeToUtc(nextMonth.y, nextMonth.m, 1, 10, 0, tz);
+    const loaded = await runMonthlyRolls(first);
+    const g1 = (await getDoc(doc(alice.db, 'groups', mg))).data()!;
+    const r1 = (await getDoc(doc(alice.db, 'groups', mg, 'rolls', g1.activeRollId))).data() as RollDoc;
+    check(loaded >= 1 && r1.name === monthName(first, tz) && r1.createdBy === alice.uid, `on the 1st the next roll loads by itself (“${r1.name}”)`);
+    await runMonthlyRolls(first + 3_600_000);
+    check((await getDocs(collection(alice.db, 'groups', mg, 'rolls'))).size === (on.rollId ? 2 : 1), 'running the job again doesn’t load a second roll');
+    // a month where a roll is already in the camera is skipped
+    const second = zonedTimeToUtc(nextMonth.m === 12 ? nextMonth.y + 1 : nextMonth.y, nextMonth.m === 12 ? 1 : nextMonth.m + 1, 1, 10, 0, tz);
+    await runMonthlyRolls(second);
+    const g2 = (await getDoc(doc(alice.db, 'groups', mg))).data()!;
+    check(g2.activeRollId === g1.activeRollId, 'a month is skipped while a roll is still in the camera');
+  }
 
   console.log('\nAnalytics (owner-only)');
   await rejects(call(alice, 'getAnalytics', {}), /permission|not available/i, 'non-admins cannot read analytics');

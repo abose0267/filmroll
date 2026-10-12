@@ -3,12 +3,14 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { Crown, LogOut, MoreHorizontal, Shield } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useGroup, useMembers, useMyMembership, useRoll } from '@/hooks/useData';
-import { Avatar, Button, Field, FullScreenLoader, IconButton, PageHeader, Sheet, TextInput, Toggle, useToast } from '@/components/ui';
+import { Avatar, Button, Field, FullScreenLoader, IconButton, PageHeader, Segmented, Sheet, TextInput, Toggle, cx, useToast } from '@/components/ui';
 import { api, errorMessage } from '@/lib/api';
 import { formatDate, fromLocalInput, toLocalInput } from '@/lib/format';
-import { LIMITS } from '@shared/constants';
+import { CAPACITIES, LIMITS } from '@shared/constants';
+import { PRESETS, PRESET_IDS } from '@shared/presets';
+import { endOfMonthEvening } from '@shared/time';
 import { developsOnDate } from '@shared/rolls';
-import type { GroupTheme, MemberDoc } from '@shared/types';
+import type { AutoRollSettings, GroupTheme, MemberDoc, PresetId } from '@shared/types';
 import { ThemePicker } from './NewGroupPage';
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -85,6 +87,12 @@ export default function GroupSettingsPage() {
                 onChange={(v) => run('history', () => api.updateGroup({ groupId: group.id, settings: { shareHistory: v } }))}
               />
             </div>
+          </Section>
+        )}
+
+        {isAdmin && (
+          <Section title="Monthly roll">
+            <MonthlyRoll groupId={group.id} auto={group.settings.autoRoll} hasActive={!!active && (active.status === 'active' || active.status === 'developing')} />
           </Section>
         )}
 
@@ -170,6 +178,60 @@ export default function GroupSettingsPage() {
           </Button>
         </div>
       </Sheet>
+    </div>
+  );
+}
+
+/** Admin setting: load a roll automatically every month, developing on the month's last evening. */
+function MonthlyRoll({ groupId, auto, hasActive }: { groupId: string; auto?: AutoRollSettings; hasActive: boolean }) {
+  const toast = useToast();
+  const [capacity, setCapacity] = useState<number>(auto?.capacity ?? 24);
+  const [preset, setPreset] = useState<PresetId>(auto?.preset ?? 'classic35');
+  const [busy, setBusy] = useState(false);
+  const on = !!auto?.enabled;
+  const tz = auto?.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const lastEvening = new Date(endOfMonthEvening(Date.now(), tz)).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+
+  async function save(enabled: boolean, c = capacity, p = preset) {
+    setBusy(true);
+    try {
+      const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const r = await api.updateGroup({ groupId, settings: { autoRoll: enabled ? { enabled, capacity: c as AutoRollSettings['capacity'], preset: p, timeZone } : { enabled: false, capacity: c as AutoRollSettings['capacity'], preset: p, timeZone } } });
+      toast(enabled ? (r.rollId ? 'Monthly roll on — this month’s roll is loaded!' : 'Monthly roll on — the next one loads on the 1st.') : 'Monthly roll off');
+    } catch (e) {
+      toast(errorMessage(e), 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-3 py-1">
+      <Toggle
+        label="Load a new roll every month"
+        description={`A fresh roll on the 1st, developing on the last evening of the month (this month: ${lastEvening}).${hasActive && !on ? ' Starts next month, since a roll is already loaded.' : ''}`}
+        checked={on}
+        onChange={(v) => void save(v)}
+      />
+      {on && (
+        <div className={cx('space-y-3 pb-3', busy && 'pointer-events-none opacity-60')}>
+          <Segmented label="Monthly roll size" value={capacity} onChange={(v) => { setCapacity(v); void save(true, v, preset); }} options={CAPACITIES.map((c) => ({ value: c, label: `${c}` }))} />
+          <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Monthly roll film">
+            {PRESET_IDS.map((id) => (
+              <button
+                key={id}
+                role="radio"
+                aria-checked={preset === id}
+                onClick={() => { setPreset(id); void save(true, capacity, id); }}
+                className={cx('rounded-full px-3 py-1.5 text-sm font-semibold ring-1 transition', preset === id ? 'bg-ink text-cream ring-ink' : 'bg-paper ring-line')}
+              >
+                {PRESETS[id].name}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-ink-soft">Times follow {tz.replace(/_/g, ' ')}. Changes apply from the next monthly roll.</p>
+        </div>
+      )}
     </div>
   );
 }
