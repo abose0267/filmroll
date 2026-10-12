@@ -4,6 +4,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/components/ui';
 import { Shot } from './shot';
 import { listQueued, removeQueued, updateQueued } from './queue';
+import { listenForeground } from './push';
 
 let running = false;
 
@@ -59,6 +60,19 @@ export function QueueSync() {
       document.removeEventListener('visibilitychange', onVis);
       clearInterval(t);
     };
+  }, [user, toast]);
+  return null;
+}
+
+/** Pushes that arrive while the app is open show as toasts. */
+export function PushForeground() {
+  const { user } = useAuth();
+  const toast = useToast();
+  useEffect(() => {
+    if (!user) return;
+    let off = () => undefined as void;
+    listenForeground((title, body) => toast(body ? `${title} — ${body}` : title)).then((f) => (off = f), () => undefined);
+    return () => off();
   }, [user, toast]);
   return null;
 }

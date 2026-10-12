@@ -63,6 +63,16 @@ service cloud.firestore {
         allow create: if false;
       }
 
+      // This user's devices for web push (doc id = FCM token). Read by the server only.
+      match /pushTokens/{token} {
+        allow read, delete: if isSelf(uid);
+        allow create, update: if isSelf(uid)
+          && request.resource.data.keys().hasOnly(['token', 'createdAt', 'userAgent'])
+          && request.resource.data.token == token
+          && isStr(request.resource.data.userAgent, 300)
+          && recent(request.resource.data.createdAt);
+      }
+
       // Private favourites: only for photos the user can actually see.
       match /favorites/{fid} {
         allow read, delete: if isSelf(uid);

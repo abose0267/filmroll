@@ -5,7 +5,7 @@ import { Button, FullScreenLoader, StatusBarBackdrop, ToastProvider } from '@/co
 import AppShell, { OfflineBanner } from '@/components/AppShell';
 import { firebaseConfigured } from '@/lib/firebase';
 import LandingPage from '@/pages/LandingPage';
-import { QueueSync } from '@/lib/queueSync';
+import { PushForeground, QueueSync } from '@/lib/queueSync';
 import HomePage from '@/pages/HomePage';
 
 const SignInPage = lazy(() => import('@/pages/SignInPage'));
@@ -106,6 +106,7 @@ export default function App() {
         <OfflineBanner />
         <StatusBarBackdrop />
         <QueueSync />
+        <PushForeground />
         <div className="grain h-full">
           <RouterProvider router={router} />
         </div>

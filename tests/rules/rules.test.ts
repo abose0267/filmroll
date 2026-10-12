@@ -110,6 +110,14 @@ describe('no client manipulation of trusted state', () => {
     await assertFails(setDoc(doc(as('eve'), 'groups', G, 'members', 'eve'), { uid: 'eve', role: 'member' }));
   });
 
+  it('push tokens are private to their owner', async () => {
+    const tok = { token: 'tok123', createdAt: Date.now(), userAgent: 'test' };
+    await assertSucceeds(setDoc(doc(as('alice'), 'users', 'alice', 'pushTokens', 'tok123'), tok));
+    await assertFails(setDoc(doc(as('alice'), 'users', 'alice', 'pushTokens', 'other'), tok));
+    await assertFails(getDoc(doc(as('bob'), 'users', 'alice', 'pushTokens', 'tok123')));
+    await assertFails(setDoc(doc(as('bob'), 'users', 'alice', 'pushTokens', 'tok123'), tok));
+  });
+
   it('users cannot change their group list', async () => {
     await assertFails(updateDoc(doc(as('alice'), 'users', 'alice'), { groupIds: [G, OTHER] }));
   });

@@ -13,6 +13,7 @@ import { PRESETS } from '@shared/presets';
 import { formatInviteCode } from '@shared/validation';
 import type { GroupDoc, MemberDoc, RollDoc } from '@shared/types';
 import { themeOf } from './HomePage';
+import PushPrompt from '@/components/PushPrompt';
 
 export function InviteSheet({ group, isAdmin, open, onClose }: { group: GroupDoc; isAdmin: boolean; open: boolean; onClose: () => void }) {
   const toast = useToast();
@@ -170,6 +171,7 @@ export default function GroupPage() {
       </div>
 
       <div className="space-y-8 px-4 pt-5">
+        {active && (active.status === 'active' || active.status === 'developing') && (active.contributors[user!.uid] ?? 0) > 0 && <PushPrompt />}
         {active && (active.status === 'active' || active.status === 'developing') ? (
           <ActiveRoll roll={active} members={members} myUid={user!.uid} />
         ) : (

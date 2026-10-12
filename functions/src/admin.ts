@@ -2,12 +2,14 @@ import { initializeApp, getApps } from 'firebase-admin/app';
 import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 import { getStorage } from 'firebase-admin/storage';
 import { getAuth } from 'firebase-admin/auth';
+import { getMessaging } from 'firebase-admin/messaging';
 
 if (!getApps().length) initializeApp();
 
 export const db = getFirestore();
 export const bucket = () => getStorage().bucket();
 export const adminAuth = () => getAuth();
+export const messaging = () => getMessaging();
 export { FieldValue };
 
 export const userRef = (uid: string) => db.doc(`users/${uid}`);
@@ -21,3 +23,5 @@ export const reservationsCol = (gid: string, rid: string) => db.collection(`grou
 /** Invite codes live outside groups so a code lookup reveals nothing else. */
 export const inviteRef = (code: string) => db.doc(`invites/${code}`);
 export const notificationsCol = (uid: string) => db.collection(`users/${uid}/notifications`);
+/** Web-push tokens for a user's devices (doc id = token). */
+export const pushTokensCol = (uid: string) => db.collection(`users/${uid}/pushTokens`);

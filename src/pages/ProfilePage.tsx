@@ -12,6 +12,7 @@ import { DEFAULT_NOTIFICATION_PREFS, LIMITS } from '@shared/constants';
 import { cleanText, displayNameError } from '@shared/validation';
 import type { NotificationPrefs } from '@shared/types';
 import { uploadAvatar } from './OnboardingPage';
+import { disablePush, enablePush, pushStatus, type PushStatus } from '@/lib/push';
 import { themeOf } from './HomePage';
 
 const Tutorial = lazy(() => import('@/components/Tutorial'));
@@ -46,6 +47,10 @@ export default function ProfilePage() {
   const file = useRef<HTMLInputElement>(null);
   const [tutorial, setTutorial] = useState(false);
   const [admin, setAdmin] = useState(false);
+  const [push, setPush] = useState<PushStatus | null>(null);
+  useEffect(() => {
+    pushStatus().then(setPush, () => setPush('unsupported'));
+  }, []);
   // The server decides who's an admin; the link only appears if it says yes.
   useEffect(() => {
     api.amIAdmin({}).then((r) => setAdmin(r.admin), () => setAdmin(false));
@@ -112,6 +117,33 @@ export default function ProfilePage() {
 
         <Section title="Notifications">
           <div className="divide-y divide-line">
+            {push && push !== 'unsupported' && (
+              push === 'on' || push === 'off' ? (
+                <Toggle
+                  label="Push on this device"
+                  description="Pings for what you’ve switched on below."
+                  checked={push === 'on'}
+                  onChange={async (v) => {
+                    try {
+                      if (v) setPush(await enablePush(user.uid));
+                      else {
+                        await disablePush(user.uid);
+                        setPush('off');
+                      }
+                    } catch (e) {
+                      toast(errorMessage(e), 'error');
+                    }
+                  }}
+                />
+              ) : (
+                <div className="py-3">
+                  <p className="font-medium">Push on this device</p>
+                  <p className="text-sm text-ink-soft">
+                    {push === 'blocked' ? 'Blocked — allow notifications for this site in your browser or phone settings.' : 'On iPhone, add FilmRoll to your Home Screen (Share → Add to Home Screen) and open it from there to turn on push.'}
+                  </p>
+                </div>
+              )
+            )}
             {PREF_LABELS.map(([k, l, d]) => (
               <Toggle key={k} label={l} description={d} checked={prefs[k]} onChange={(v) => save({ notificationPrefs: { ...prefs, [k]: v } })} />
             ))}
@@ -145,7 +177,10 @@ export default function ProfilePage() {
             <button className="w-full py-3 text-left font-semibold text-[#B5443A]" onClick={() => setDeleting(true)}>Delete account…</button>
           </div>
         </Section>
-        <p className="pb-4 text-center text-xs text-ink-faint">FilmRoll · Different lives. One roll of film.</p>
+        <div className="space-y-0.5 pb-4 text-center text-xs text-ink-faint">
+          <p>FilmRoll · Different lives. One roll of film.</p>
+          <p className="font-mono" aria-label={`Version ${__APP_VERSION__}`}>v{__APP_VERSION__}{__APP_BUILD__ ? ` · ${__APP_BUILD__}` : ' · dev'}</p>
+        </div>
       </div>
 
       {tutorial && (

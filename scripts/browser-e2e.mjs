@@ -267,6 +267,17 @@ try {
   await bob.page.waitForFunction(() => document.querySelectorAll('img[src^="blob:"]').length >= 12, null, { timeout: 30000 });
   await shot(bob.page, '13b-contact-sheet');
   log((await bob.page.locator('img[src^="blob:"]').count()) >= 12, 'all 12 photos load after development');
+  // shareable reveal clip (made on the device; downloads where there's no share sheet)
+  await bob.page.evaluate(() => { navigator.canShare = undefined; });
+  await bob.page.getByRole('button', { name: 'Share the reveal' }).click();
+  const [dl] = await Promise.all([bob.page.waitForEvent('download', { timeout: 60000 }), bob.page.getByRole('button', { name: 'Make video' }).click()]);
+  const clipPath = `${SHOTS}/reveal-clip.${dl.suggestedFilename().split('.').pop()}`;
+  await dl.saveAs(clipPath);
+  const { statSync } = await import('node:fs');
+  const size = statSync(clipPath).size;
+  log(size > 50_000 && /\.(mp4|webm)$/.test(clipPath), `reveal clip made on the device (${dl.suggestedFilename()}, ${Math.round(size / 1024)} KB)`);
+  await bob.page.waitForTimeout(500);
+  await bob.page.mouse.wheel(0, -3000);
   await bob.page.getByRole('button', { name: /Open frame 1:/ }).click();
   await bob.page.getByText('Morning coffee before work').waitFor();
   await bob.page.waitForTimeout(800);

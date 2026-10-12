@@ -127,10 +127,16 @@ node scripts/orientation-e2e.mjs e2e-screens   # upright / sideways / rotated-sc
 
 Rate limits can be turned off for testing with `DISABLE_RATE_LIMITS=true` in `functions/.env.<project>`. Never leave that on in production.
 
+## Push notifications
+
+Web push via FCM (`VITE_FIREBASE_VAPID_KEY` in `.env.production`). A dedicated worker (`public/firebase-messaging-sw.js`, scope `<base>/fcm/`) shows data-only messages; `notify()` sends them alongside in-app notifications, honouring preferences and group mutes, and prunes dead tokens. Permission is only requested from a tap (group page card after you've shot on the roll, or Profile). On iPhone it requires the Home Screen app (iOS 16.4+). Not available in emulator mode.
+
+## Reveal clips
+
+Album → Share the reveal renders a 9:16 video on the device (canvas + MediaRecorder; MP4 where supported, else WebM) and opens the share sheet or downloads it.
+
 ## Not included yet
 
-- Web push notifications (in-app notifications are implemented; FCM can be added later).
-- Offline capture with queued uploads; the app tells you when a connection is required.
 - Album ZIP export, prints, voice captions, yearly books (the data model leaves room for these).
 - Group cover *images* (groups have colour themes instead).
 - Multiple active rolls per group (rolls are a collection; the MVP enforces one in `startRoll`).

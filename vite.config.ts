@@ -4,6 +4,11 @@ import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { VitePWA } from 'vite-plugin-pwa';
 import { fileURLToPath, URL } from 'node:url';
+import { readFileSync } from 'node:fs';
+
+const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { version: string };
+// Vercel exposes the commit being built; locally this is empty.
+const build = (process.env.VERCEL_GIT_COMMIT_SHA ?? '').slice(0, 7);
 
 // `npm run dev:phone`: HTTPS + one origin that proxies every emulator, so a phone
 // on the same Wi-Fi can use the app (camera needs HTTPS; emulators stay on localhost).
@@ -14,6 +19,7 @@ const emu = (port: number) => ({ target: `http://127.0.0.1:${port}`, changeOrigi
 
 export default defineConfig(async () => ({
   base,
+  define: { __APP_VERSION__: JSON.stringify(pkg.version), __APP_BUILD__: JSON.stringify(build) },
   plugins: [
     ...(phone ? [((await import('@vitejs/plugin-basic-ssl')).default() as PluginOption)] : []),
     react(),
@@ -42,6 +48,7 @@ export default defineConfig(async () => ({
         // App shell only. Photos are fetched with an auth header from the photo
         // function and are never put in a service-worker cache.
         globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
+        globIgnores: ['firebase-messaging-sw.js'],
         navigateFallback: `${base}index.html`,
         navigateFallbackDenylist: [/^\/api\//, /^\/__\//],
         runtimeCaching: [

@@ -1,8 +1,10 @@
 import { useCallback, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { Bookmark, Play } from 'lucide-react';
+import { Bookmark, Clapperboard, Play } from 'lucide-react';
 import { useComments, useFavorites, useGroup, useMembers, useMyMembership, usePhotos, useReactions, useRoll } from '@/hooks/useData';
-import { Button, EmptyState, FullScreenLoader, PageHeader, Segmented } from '@/components/ui';
+import { Button, EmptyState, FullScreenLoader, PageHeader, Segmented, Sheet, useToast } from '@/components/ui';
+import { canMakeRevealClip, makeRevealClip, shareOrDownload } from '@/lib/revealClip';
+import { errorMessage } from '@/lib/api';
 import { AlbumCover, ContactSheet, DisposableCamera } from '@/components/film';
 import DevelopReveal from '@/components/DevelopReveal';
 import PhotoViewer from '@/components/PhotoViewer';
@@ -90,6 +92,7 @@ export default function AlbumPage() {
           ))}
         </div>
         {roll.firstShotAt && <p className="text-center text-sm text-ink-soft">Shot {dateRange(roll.firstShotAt, roll.lastShotAt)}</p>}
+        {photos.length > 0 && canMakeRevealClip() && <ShareReveal roll={roll} groupName={group.name} photos={photos} />}
 
         {photos.length === 0 && !pLoading ? (
           <EmptyState title="An empty roll" action={<Link to={`/g/${group.id}/new-roll`}><Button>Start a new roll</Button></Link>}>Nobody took a shot this time. That’s okay — load another roll and try again.</EmptyState>
@@ -113,5 +116,42 @@ export default function AlbumPage() {
         <PhotoViewer photos={shown} index={index} onIndex={open} onClose={close} people={people} comments={comments} reactions={reactions} favorites={favorites} me={me} />
       )}
     </div>
+  );
+}
+
+/** Explicit, user-initiated export of the reveal as a short Stories video. */
+function ShareReveal({ roll, groupName, photos }: { roll: Parameters<typeof makeRevealClip>[0]; groupName: string; photos: Parameters<typeof makeRevealClip>[2] }) {
+  const toast = useToast();
+  const [open, setOpen] = useState(false);
+  const [progress, setProgress] = useState<number | null>(null);
+  async function make() {
+    setProgress(0);
+    try {
+      const file = await makeRevealClip(roll, groupName, photos, setProgress);
+      const how = await shareOrDownload(file);
+      if (how === 'downloaded') toast('Reveal video saved.');
+      setOpen(false);
+    } catch (e) {
+      toast(errorMessage(e), 'error');
+    } finally {
+      setProgress(null);
+    }
+  }
+  return (
+    <>
+      <Button variant="secondary" className="w-full" icon={<Clapperboard className="size-5" />} onClick={() => setOpen(true)}>Share the reveal</Button>
+      <Sheet open={open} onClose={() => progress == null && setOpen(false)} title="Share the reveal">
+        <div className="space-y-4 pb-4">
+          <p className="text-ink-soft">This makes an 8-second video of the developing animation and this roll’s contact sheet ({Math.min(12, photos.length)} frames) — sized for Stories. It’s a copy to share outside {groupName}; the album itself stays private.</p>
+          {progress != null && (
+            <div className="space-y-1" role="status">
+              <div className="h-2 overflow-hidden rounded-full bg-paper-2"><div className="h-full bg-coral transition-[width]" style={{ width: `${Math.round(progress * 100)}%` }} /></div>
+              <p className="text-center text-sm text-ink-soft">Developing your video… {Math.round(progress * 100)}%</p>
+            </div>
+          )}
+          <Button className="w-full" loading={progress != null} onClick={make}>Make video</Button>
+        </div>
+      </Sheet>
+    </>
   );
 }
