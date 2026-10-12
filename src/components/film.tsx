@@ -144,7 +144,7 @@ export function FilmStrip({ children, className }: { children: ReactNode; classN
 }
 
 /** Lazy thumbnail loaded through the authorized photo endpoint. */
-export function PhotoImage({ photo, variant = 'thumb', className, alt, eager, onLoad }: { photo: Pick<PhotoDoc, 'groupId' | 'rollId' | 'id' | 'caption' | 'frame'>; variant?: PhotoVariant; className?: string; alt?: string; eager?: boolean; onLoad?: () => void }) {
+export function PhotoImage({ photo, variant = 'thumb', className, style, fit = 'cover', alt, eager, onLoad }: { photo: Pick<PhotoDoc, 'groupId' | 'rollId' | 'id' | 'caption' | 'frame'>; variant?: PhotoVariant; className?: string; style?: React.CSSProperties; fit?: 'cover' | 'contain'; alt?: string; eager?: boolean; onLoad?: () => void }) {
   const holder = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(!!eager);
   useEffect(() => {
@@ -156,12 +156,12 @@ export function PhotoImage({ photo, variant = 'thumb', className, alt, eager, on
   const { url, error } = usePhoto(photo.groupId, photo.rollId, photo.id, variant, visible);
   const [loaded, setLoaded] = useState(false);
   return (
-    <div ref={holder} className={cx('relative overflow-hidden bg-[#2a2622]', className)}>
+    <div ref={holder} className={cx('relative overflow-hidden bg-[#2a2622]', className)} style={style}>
       {url && (
         <img
           src={url}
           alt={alt ?? (photo.caption ? `Frame ${photo.frame}: ${photo.caption}` : `Frame ${photo.frame}`)}
-          className={cx('size-full object-cover transition-opacity duration-500', loaded ? 'opacity-100' : 'opacity-0')}
+          className={cx('size-full transition-opacity duration-500', fit === 'cover' ? 'object-cover' : 'object-contain', loaded ? 'opacity-100' : 'opacity-0')}
           onLoad={() => {
             setLoaded(true);
             onLoad?.();
@@ -197,7 +197,7 @@ export function ContactSheet({ photos, roll, names, onOpen, reveal }: { photos: 
                   transition={{ delay: reveal ? 0.15 + idx * 0.08 : 0, duration: 0.9 }}
                   aria-label={`Open frame ${p.frame}${p.caption ? `: ${p.caption}` : ''} by ${names[p.uid] ?? 'a friend'}`}
                 >
-                  <PhotoImage photo={p} className="aspect-[4/5] rounded-[3px]" />
+                  <PhotoImage photo={p} fit="contain" className="aspect-square rounded-[3px] !bg-[#141210]" />
                   <span className="mt-0.5 flex justify-between font-mono text-[9px] text-amber/80">
                     <span>{p.frame}{idx % 2 ? 'A' : ''} ▸</span>
                     <span className="truncate pl-1 text-cream/50">{(names[p.uid] ?? '').split(' ')[0]}</span>
@@ -223,6 +223,12 @@ function chunk<T>(a: T[], n: number): T[][] {
   return out;
 }
 
+/** Width / height of a photo (thumb dimensions match the stored shape). */
+export function aspectOf(p: Pick<PhotoDoc, 'thumb'>): number {
+  return p.thumb?.width && p.thumb?.height ? p.thumb.width / p.thumb.height : 3 / 4;
+}
+export const isLandscape = (p: Pick<PhotoDoc, 'thumb'>) => aspectOf(p) > 1;
+
 /** Album cover: printed collage + title block. */
 export function AlbumCover({ roll, groupName, photos, className }: { roll: RollDoc; groupName: string; photos: PhotoDoc[]; className?: string }) {
   const cover = roll.coverPhotoIds.map((id) => photos.find((p) => p.id === id)).filter((p): p is PhotoDoc => !!p).slice(0, 4);
@@ -230,15 +236,15 @@ export function AlbumCover({ roll, groupName, photos, className }: { roll: RollD
   const tilts = [-4, 3, -2, 5];
   return (
     <div className={cx('relative overflow-hidden rounded-[22px] p-5 shadow-print', className)} style={{ background: c.body }}>
-      <div className="relative mx-auto mb-5 h-64 max-w-xs">
+      <div className="relative mx-auto mb-5 h-72 max-w-xs">
         {cover.length ? (
           cover.map((p, i) => (
             <div
               key={p.id}
-              className="absolute w-[46%] bg-cream p-1.5 pb-4 shadow-print"
-              style={{ left: `${[2, 50, 10, 46][i]}%`, top: `${[0, 4, 40, 46][i]}%`, transform: `rotate(${tilts[i]}deg)`, zIndex: i }}
+              className={cx('absolute bg-cream p-1.5 pb-4 shadow-print', isLandscape(p) ? 'w-[46%]' : 'w-[31%]')}
+              style={{ left: `${[2, 50, 10, 46][i] + (isLandscape(p) ? 0 : 6)}%`, top: `${[0, 4, 40, 44][i]}%`, transform: `rotate(${tilts[i]}deg)`, zIndex: i }}
             >
-              <PhotoImage photo={p} className="aspect-[4/3]" eager />
+              <PhotoImage photo={p} style={{ aspectRatio: aspectOf(p) }} eager />
             </div>
           ))
         ) : (

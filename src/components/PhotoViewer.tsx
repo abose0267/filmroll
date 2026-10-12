@@ -12,7 +12,7 @@ import { LIMITS, REACTIONS } from '@shared/constants';
 import { PRESETS } from '@shared/presets';
 import type { CommentDoc, MemberDoc, PhotoDoc, ReactionDoc, ReactionEmoji } from '@shared/types';
 import { Avatar, Button, IconButton, Sheet, TextInput, cx, useToast } from './ui';
-import { PhotoImage } from './film';
+import { PhotoImage, aspectOf } from './film';
 
 interface Props {
   photos: PhotoDoc[];
@@ -143,9 +143,15 @@ export default function PhotoViewer({ photos, index, onIndex, onClose, people, c
               else if (i.offset.x > 70 || i.velocity.x > 500) go(-1);
             }}
           >
-            <div className="relative max-h-full w-full">
-              <PhotoImage photo={photo} variant="display" eager className="mx-auto max-h-[calc(100dvh-220px)] bg-transparent [&_img]:object-contain" />
-            </div>
+            {/* sized from the photo's own shape so tall and wide shots both fit whole */}
+            <PhotoImage
+              photo={photo}
+              variant="display"
+              eager
+              fit="contain"
+              className="mx-auto !bg-transparent"
+              style={{ aspectRatio: aspectOf(photo), width: `min(100%, calc((100dvh - 220px) * ${aspectOf(photo)}))` }}
+            />
           </motion.div>
         </AnimatePresence>
         <button className="absolute inset-y-0 left-0 hidden w-16 items-center justify-center md:flex" onClick={(e) => { e.stopPropagation(); go(-1); }} aria-label="Previous photo" disabled={index === 0}><ChevronLeft className="size-8 opacity-70" /></button>

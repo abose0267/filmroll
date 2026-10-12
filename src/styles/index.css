@@ -59,6 +59,7 @@ body {
 
 .pt-safe { padding-top: max(var(--safe-top), 12px); }
 .pb-safe { padding-bottom: max(var(--safe-bottom), 12px); }
+.pr-safe { padding-right: max(env(safe-area-inset-right, 0px), 12px); }
 .pb-nav { padding-bottom: calc(var(--nav-h) + var(--safe-bottom) + 24px); }
 
 .font-display { font-variation-settings: 'opsz' 96; letter-spacing: -0.01em; }

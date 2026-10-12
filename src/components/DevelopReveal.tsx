@@ -81,7 +81,7 @@ export default function DevelopReveal({ roll, groupName, photos, onDone }: { rol
                 <div className="grid grid-cols-3 gap-1.5 bg-[#1c1916] p-1.5">
                   {frames.map((p, i) => (
                     <motion.div key={p.id} initial={{ opacity: 0, filter: 'brightness(3) sepia(1) blur(2px)' }} animate={{ opacity: 1, filter: 'brightness(1) sepia(0) blur(0px)' }} transition={{ delay: 0.15 * i, duration: 1 }}>
-                      <PhotoImage photo={p} className="aspect-[4/5]" eager />
+                      <PhotoImage photo={p} fit="contain" className="aspect-square !bg-[#141210]" eager />
                     </motion.div>
                   ))}
                   {frames.length === 0 && <div className="col-span-3 py-10 text-center text-sm text-cream/60">An empty roll — nobody took a shot this time.</div>}

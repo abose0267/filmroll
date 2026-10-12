@@ -9,6 +9,7 @@ import { DisposableCamera, FilmStrip } from '@/components/film';
 import { errorCode, errorMessage } from '@/lib/api';
 import { decode, previewUrl, processPhoto } from '@/lib/image';
 import { submitExposure, type SubmitStage } from '@/lib/upload';
+import { cropToAspect, rotatedSize, rotationFor, useDeviceTilt, useViewportLandscape } from '@/lib/orientation';
 import { playAdvance, playShutter, vibrate } from '@/lib/sound';
 import { randomRequestId } from '@/lib/format';
 import { FALLBACK_FILE_MAX_AGE_MS, LIMITS } from '@shared/constants';
@@ -151,6 +152,16 @@ function Camera({ roll, group }: { roll: RollDoc; group: GroupDoc }) {
 
   const remaining = shotsRemaining(roll);
 
+  // Orientation: if the browser rotates the UI we switch to a side-by-side layout;
+  // if the UI stays portrait (installed app, rotation lock) the tilt sensor tells us
+  // the phone is sideways, the controls turn to face the user and the shot is
+  // rotated upright into a landscape photo.
+  const viewportLandscape = useViewportLandscape();
+  const { tilt, enable: enableTilt } = useDeviceTilt(stage === 'camera' && !viewportLandscape);
+  const sideways = viewportLandscape ? 'portrait' : tilt;
+  const iconTurn = sideways === 'left' ? 90 : sideways === 'right' ? -90 : 0;
+  const turn = { transform: `rotate(${iconTurn}deg)`, transition: reduce ? undefined : 'transform 250ms ease' };
+
   const stopStream = useCallback(() => {
     stream.current?.getTracks().forEach((t) => t.stop());
     stream.current = null;
@@ -236,15 +247,19 @@ function Camera({ roll, group }: { roll: RollDoc; group: GroupDoc }) {
       await new Promise((r) => setTimeout(r, 180));
     }
     if (flash && torchSupported && track) await track.applyConstraints({ advanced: [{ torch: true } as MediaTrackConstraintSet] }).catch(() => undefined);
+    // Capture exactly what the viewfinder shows (3:4, or 4:3 in a landscape UI),
+    // then turn sideways shots upright.
+    const crop = cropToAspect(v.videoWidth, v.videoHeight, viewportLandscape ? 4 / 3 : 3 / 4);
+    const deg = rotationFor(sideways);
+    const size = rotatedSize(crop.sw, crop.sh, deg);
     const c = document.createElement('canvas');
-    c.width = v.videoWidth;
-    c.height = v.videoHeight;
+    c.width = size.width;
+    c.height = size.height;
     const ctx = c.getContext('2d')!;
-    if (facing === 'user') {
-      ctx.translate(c.width, 0);
-      ctx.scale(-1, 1);
-    }
-    ctx.drawImage(v, 0, 0);
+    ctx.translate(c.width / 2, c.height / 2);
+    ctx.rotate((deg * Math.PI) / 180);
+    if (facing === 'user') ctx.scale(-1, 1); // match the mirrored selfie preview
+    ctx.drawImage(v, crop.sx, crop.sy, crop.sw, crop.sh, -crop.sw / 2, -crop.sh / 2, crop.sw, crop.sh);
     if (flash && torchSupported && track) await track.applyConstraints({ advanced: [{ torch: false } as MediaTrackConstraintSet] }).catch(() => undefined);
     setScreenFlash(false);
     setBlink(true);
@@ -312,7 +327,7 @@ function Camera({ roll, group }: { roll: RollDoc; group: GroupDoc }) {
   };
 
   return (
-    <main className="fixed inset-0 flex flex-col bg-body text-cream" aria-label="Camera">
+    <main className="fixed inset-0 flex flex-col bg-body text-cream" aria-label="Camera" onPointerDown={enableTilt}>
       {/* top bar */}
       <div className="flex items-center gap-2 px-3 pt-safe">
         <IconButton label="Close camera" onClick={leave} className="text-cream active:bg-white/10"><X className="size-6" /></IconButton>
@@ -320,16 +335,16 @@ function Camera({ roll, group }: { roll: RollDoc; group: GroupDoc }) {
           <p className="truncate text-sm font-semibold">{group.name}</p>
           <p className="truncate text-xs text-cream/60">{roll.name} · <span className="font-mono">{PRESETS[roll.preset].code}</span></p>
         </div>
-        <div className="grid h-9 min-w-14 place-items-center rounded-lg bg-black px-2 font-mono text-lg text-amber shadow-inner" aria-label={`${remaining} exposures left`}>
+        <div className="grid h-9 min-w-14 place-items-center rounded-lg bg-black px-2 font-mono text-lg text-amber shadow-inner" style={turn} aria-label={`${remaining} exposures left`}>
           {String(stage === 'done' && remainingAfter != null ? remainingAfter : remaining).padStart(2, '0')}
         </div>
       </div>
 
       <AnimatePresence mode="wait">
         {stage === 'camera' && (
-          <motion.section key="cam" className="flex min-h-0 flex-1 flex-col" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <div className="flex min-h-0 flex-1 items-center justify-center px-5 py-4">
-              <div className="relative aspect-[3/4] max-h-full w-full max-w-md overflow-hidden rounded-[22px] bg-black shadow-[inset_0_0_0_6px_#1a1816]">
+          <motion.section key="cam" className={cx('flex min-h-0 flex-1', viewportLandscape ? 'flex-row' : 'flex-col')} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            <div className={cx('flex min-h-0 flex-1 items-center justify-center', viewportLandscape ? 'py-2 pl-4' : 'px-5 py-4')}>
+              <div className={cx('relative max-h-full overflow-hidden rounded-[22px] bg-black shadow-[inset_0_0_0_6px_#1a1816]', viewportLandscape ? 'aspect-[4/3] h-full' : 'aspect-[3/4] w-full max-w-md')}>
                 <video
                   ref={video}
                   playsInline
@@ -362,22 +377,23 @@ function Camera({ roll, group }: { roll: RollDoc; group: GroupDoc }) {
                 {/* frame guides */}
                 <div className="pointer-events-none absolute inset-3 rounded-[14px] border border-white/15" />
                 <div className="pointer-events-none absolute inset-0 shadow-[inset_0_0_60px_rgba(0,0,0,0.55)]" />
-                {roll.dateStamp && <span className="pointer-events-none absolute bottom-4 right-5 font-mono text-sm text-stamp/80">{dateStampText(Date.now())}</span>}
+                {roll.dateStamp && sideways === 'portrait' && <span className="pointer-events-none absolute bottom-4 right-5 font-mono text-sm text-stamp/80">{dateStampText(Date.now())}</span>}
                 <AnimatePresence>{blink && <motion.div className="absolute inset-0 bg-black" initial={{ opacity: 1 }} animate={{ opacity: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.25 }} />}</AnimatePresence>
               </div>
             </div>
 
-            <div className="flex items-center justify-center gap-6 pb-2 text-cream/80">
+            <div className={cx('flex', viewportLandscape ? 'w-44 flex-col-reverse justify-center pr-safe' : 'flex-col')}>
+            <div className={cx('flex items-center justify-center text-cream/80', viewportLandscape ? 'flex-col gap-1 pt-2' : 'gap-6 pb-2')}>
               <button className="flex items-center gap-1.5 rounded-full px-3 py-2 text-xs font-semibold active:bg-white/10" onClick={() => { setFlash(!flash); writePref('flash', !flash); }} aria-pressed={flash}>
-                {flash ? <Zap className="size-4 text-amber" /> : <ZapOff className="size-4" />} Flash {flash ? 'on' : 'off'}
+                {flash ? <Zap className="size-4 text-amber" style={turn} /> : <ZapOff className="size-4" style={turn} />} Flash {flash ? 'on' : 'off'}
               </button>
-              <span className="flex items-center gap-1.5 text-xs"><CalendarDays className="size-4" /> {roll.dateStamp ? 'Date stamp' : 'No stamp'}</span>
+              <span className="flex items-center gap-1.5 text-xs"><CalendarDays className="size-4" style={turn} /> {roll.dateStamp ? 'Date stamp' : 'No stamp'}</span>
               <button className="flex items-center gap-1.5 rounded-full px-3 py-2 text-xs font-semibold active:bg-white/10" onClick={() => { setSound(!sound); writePref('sound', !sound); }} aria-pressed={sound}>
-                {sound ? <Volume2 className="size-4" /> : <VolumeX className="size-4" />} Sound
+                {sound ? <Volume2 className="size-4" style={turn} /> : <VolumeX className="size-4" style={turn} />} Sound
               </button>
             </div>
 
-            <div className="flex items-center justify-around px-8 pb-safe pt-2">
+            <div className={cx('flex items-center', viewportLandscape ? 'flex-col justify-center gap-4' : 'justify-around px-8 pb-safe pt-2')}>
               {/* no gallery: only fresh shots go on the roll */}
               <span className="size-14" aria-hidden />
               <button
@@ -387,7 +403,8 @@ function Camera({ roll, group }: { roll: RollDoc; group: GroupDoc }) {
               >
                 <span className="size-[64px] rounded-full bg-coral shadow-[inset_0_-4px_0_rgba(0,0,0,0.2)]" />
               </button>
-              <IconButton label="Switch camera" disabled={!canFlip || camState !== 'live'} onClick={() => setFacing(facing === 'user' ? 'environment' : 'user')} className="size-14 bg-white/10 text-cream active:bg-white/20 disabled:opacity-30"><SwitchCamera className="size-6" /></IconButton>
+              <IconButton label="Switch camera" disabled={!canFlip || camState !== 'live'} onClick={() => setFacing(facing === 'user' ? 'environment' : 'user')} className="size-14 bg-white/10 text-cream active:bg-white/20 disabled:opacity-30"><SwitchCamera className="size-6" style={turn} /></IconButton>
+            </div>
             </div>
           </motion.section>
         )}
@@ -396,7 +413,7 @@ function Camera({ roll, group }: { roll: RollDoc; group: GroupDoc }) {
           <motion.section key="confirm" className="flex min-h-0 flex-1 flex-col overflow-y-auto" initial={{ opacity: 0, y: reduce ? 0 : 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
             <div className="flex justify-center px-6 pt-4">
               <div className="w-full max-w-sm -rotate-1 bg-cream p-3 pb-10 shadow-print">
-                {preview ? <img src={preview} alt="Your photo with the film effect" className="aspect-[3/4] w-full object-cover" /> : <div className="grid aspect-[3/4] place-items-center bg-[#2a2622] text-sm text-cream/60">Developing preview…</div>}
+                {preview ? <img src={preview} alt="Your photo with the film effect" className="max-h-[52dvh] w-full object-contain" /> : <div className={cx('grid place-items-center bg-[#2a2622] text-sm text-cream/60', bitmap && bitmap.width > bitmap.height ? 'aspect-[4/3]' : 'aspect-[3/4]')}>Developing preview…</div>}
                 <p className="mt-2 text-center font-mono text-[11px] text-ink-soft">{PRESETS[roll.preset].name}</p>
               </div>
             </div>
