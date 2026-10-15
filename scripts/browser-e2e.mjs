@@ -26,8 +26,12 @@ const log = (ok, msg) => {
 const errors = [];
 const pages = [];
 
-async function newUser(name, opts = {}) {
+const SKIP_INSTALL = () => localStorage.setItem('filmroll:install-skip', '1');
+
+async function newUser(name, opts = {}, { install = false } = {}) {
   const ctx = await browser.newContext({ ...phone, permissions: ['camera'], ...opts });
+  // Phones are asked to install first; only Alice goes through that screen.
+  if (!install) await ctx.addInitScript(SKIP_INSTALL);
   const page = await ctx.newPage();
   pages.push([name, page]);
   page.on('pageerror', (e) => errors.push(`[${name}] pageerror ${e.message}`));
@@ -119,8 +123,12 @@ async function shootFile(page, file, caption) {
 
 try {
   console.log('Alice signs up and creates a group');
-  const alice = await newUser('Alice');
+  const alice = await newUser('Alice', {}, { install: true });
   await alice.page.goto(BASE + '/');
+  await alice.page.getByRole('heading', { name: 'Put FilmRoll on your home screen' }).waitFor();
+  log(await alice.page.getByText('Add to Home Screen').isVisible(), 'phones are asked to add FilmRoll to the home screen before signing up');
+  await shot(alice.page, '00-install');
+  await alice.page.getByRole('button', { name: 'Use it in the browser instead' }).click();
   await alice.page.getByRole('heading', { name: 'FilmRoll' }).waitFor();
   await shot(alice.page, '01-landing');
   const aliceEmail = await signUp(alice);
@@ -142,6 +150,15 @@ try {
   await shot(alice.page, '03-invite');
   await alice.page.getByRole('button', { name: 'Close' }).click();
   const gid = new URL(alice.page.url()).pathname.split('/')[2];
+
+  console.log('An invite opened in the browser keeps its code through the install screen');
+  const carol = await newUser('Carol', {}, { install: true });
+  await carol.page.goto(`${BASE}/join/${code.replace('-', '')}`);
+  await carol.page.getByRole('button', { name: /Copy invite code/ }).waitFor();
+  log((await carol.page.getByRole('button', { name: /Copy invite code/ }).textContent()).includes(code.replace('-', '')), 'install screen shows the invite code');
+  await shot(carol.page, '03b-install-invite');
+  await carol.ctx.close();
+  pages.splice(pages.findIndex(([n]) => n === 'Carol'), 1);
 
   console.log('Bob joins with the invite link');
   const bob = await newUser('Bob');
@@ -165,14 +182,17 @@ try {
   await shot(alice.page, '05-group-active');
 
   console.log('Alice shoots with the (fake) camera');
-  // the ✕ closes the camera (and must work as the very first tap)
-  await alice.page.getByRole('button', { name: 'Capture a memory' }).click();
-  await alice.page.waitForURL(/\/camera/);
+  // the full-screen camera's ✕ closes it (and must work as the very first tap)
+  await alice.page.goto(`${BASE}/camera?g=${gid}`);
   await alice.page.getByRole('button', { name: 'Close camera' }).click();
   await alice.page.waitForURL(new RegExp(`/g/${gid}$`));
-  log(true, 'the ✕ closes the camera');
+  log(true, 'the ✕ closes the full-screen camera');
+  // "Capture a memory" opens the camera on the home tab, where the tab bar's center button is the shutter
   await alice.page.getByRole('button', { name: 'Capture a memory' }).click();
-  await alice.page.waitForURL(/\/camera/);
+  await alice.page.waitForURL(/\/\?g=/);
+  await alice.page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: /^Take photo/ }).waitFor();
+  log((await alice.page.getByRole('button', { name: /^Take photo/ }).count()) === 1, 'home camera: the center tab is the (only) shutter');
+  log(await alice.page.getByRole('link', { name: 'Profile and settings' }).isVisible(), 'profile button in the top right of the camera');
   await alice.page.waitForFunction(() => {
     const v = document.querySelector('video');
     return v && v.videoWidth > 0 && !v.classList.contains('opacity-0');
@@ -297,7 +317,7 @@ try {
   log(true, 'viewer navigates to the next frame');
 
   console.log('Alice sees the developed roll + notifications');
-  await alice.page.goto(BASE + '/');
+  await alice.page.goto(BASE + '/groups');
   await alice.page.getByText('Your film is developed!').waitFor({ timeout: 10000 });
   await shot(alice.page, '16-home-developed');
   await alice.page.goto(BASE + '/notifications');
@@ -337,10 +357,35 @@ try {
   log(true, 'with winding off the shutter fires straight away');
   await noteAndDone(alice.page, 'no wind');
   await savesSettled(alice.page);
+
+  console.log('Roll switcher on the shutter view');
+  await alice.page.goto(BASE + '/g/new');
+  await alice.page.getByLabel('Group name').fill('Second Crew');
+  await alice.page.getByRole('button', { name: 'Create group' }).click();
+  await alice.page.waitForURL(/\/g\/[^/]+\?invite=1/);
+  const gid2 = new URL(alice.page.url()).pathname.split('/')[2];
+  await alice.page.goto(`${BASE}/g/${gid2}/new-roll`);
+  await alice.page.getByLabel('Roll name').fill('Weekend roll');
+  await alice.page.getByRole('radio', { name: '12 photos' }).click();
+  await alice.page.getByRole('radio', { name: /When the roll is full/ }).click();
+  await alice.page.getByRole('button', { name: 'Load 12 exposures' }).click();
+  await alice.page.waitForURL(new RegExp(`/g/${gid2}$`));
   await alice.page.goto(BASE + '/');
+  await alice.page.getByRole('button', { name: /Switch roll/ }).click();
+  await shot(alice.page, '21-roll-switcher');
+  await alice.page.getByRole('button', { name: /Weekend roll/ }).click();
+  await alice.page.getByRole('button', { name: /Shooting on Second Crew, Weekend roll/ }).waitFor();
+  await alice.page.reload();
+  await alice.page.getByRole('button', { name: /Shooting on Second Crew, Weekend roll/ }).waitFor();
+  log(true, 'switching rolls from the shutter view sticks');
+  await shot(alice.page, '22-home-camera');
+  await alice.page.goto(BASE + '/groups');
+  await alice.page.getByRole('heading', { name: 'Groups' }).waitFor();
+  await shot(alice.page, '23-groups');
 
   console.log('Reduced motion');
   const calm = await browser.newContext({ ...phone, reducedMotion: 'reduce' });
+  await calm.addInitScript(SKIP_INSTALL);
   const cp = await calm.newPage();
   await cp.goto(`${BASE}/signin?next=${encodeURIComponent(`/g/${gid}/r/${rid}`)}`);
   await cp.getByLabel('Email').fill(aliceEmail);

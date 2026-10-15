@@ -173,7 +173,7 @@ export default function GroupSettingsPage() {
             You’ll lose access to {group.name}’s albums. Photos you already added stay in the roll and will still be revealed to the group.
             {members.length === 1 && ' You’re the last member, so the group and its albums will be deleted.'}
           </p>
-          <Button variant="danger" className="w-full" loading={busy === 'leave'} onClick={() => run('leave', async () => { await api.leaveGroup({ groupId: group.id }); nav('/', { replace: true }); })}>
+          <Button variant="danger" className="w-full" loading={busy === 'leave'} onClick={() => run('leave', async () => { await api.leaveGroup({ groupId: group.id }); nav('/groups', { replace: true }); })}>
             Leave group
           </Button>
         </div>

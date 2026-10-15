@@ -1,4 +1,4 @@
-import { lazy, Suspense, type ReactNode } from 'react';
+import { lazy, Suspense, useState, type ReactNode } from 'react';
 import { createBrowserRouter, Navigate, RouterProvider, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from '@/hooks/useAuth';
 import { Button, FullScreenLoader, StatusBarBackdrop, ToastProvider } from '@/components/ui';
@@ -7,6 +7,8 @@ import { firebaseConfigured } from '@/lib/firebase';
 import LandingPage from '@/pages/LandingPage';
 import { PushForeground, QueueSync } from '@/lib/queueSync';
 import HomePage from '@/pages/HomePage';
+import InstallGate from '@/components/InstallGate';
+import { shouldAskToInstall } from '@/lib/install';
 
 const SignInPage = lazy(() => import('@/pages/SignInPage'));
 const OnboardingPage = lazy(() => import('@/pages/OnboardingPage'));
@@ -17,7 +19,7 @@ const GroupSettingsPage = lazy(() => import('@/pages/GroupSettingsPage'));
 const NewRollPage = lazy(() => import('@/pages/NewRollPage'));
 const CameraPage = lazy(() => import('@/pages/CameraPage'));
 const AlbumPage = lazy(() => import('@/pages/AlbumPage'));
-const AlbumsPage = lazy(() => import('@/pages/AlbumsPage'));
+const GroupsPage = lazy(() => import('@/pages/GroupsPage'));
 const ProfilePage = lazy(() => import('@/pages/ProfilePage'));
 const NotificationsPage = lazy(() => import('@/pages/NotificationsPage'));
 const AboutPage = lazy(() => import('@/pages/AboutPage'));
@@ -70,7 +72,8 @@ const router = createBrowserRouter([
     element: <Root />,
     children: [
       { index: true, element: <HomePage /> },
-      { path: 'albums', element: <Lazy><AlbumsPage /></Lazy> },
+      { path: 'groups', element: <Lazy><GroupsPage /></Lazy> },
+      { path: 'albums', element: <Navigate to="/groups?view=rolls" replace /> },
       { path: 'profile', element: <Lazy><ProfilePage /></Lazy> },
       { path: 'notifications', element: <Lazy><NotificationsPage /></Lazy> },
       { path: 'about', element: <Lazy><AboutPage /></Lazy> },
@@ -98,6 +101,15 @@ function NotConfigured() {
   );
 }
 
+/** On phones, signed-out visitors are asked to add FilmRoll to the home screen before making an account. */
+function InstallFirst({ children }: { children: ReactNode }) {
+  const { user, loading } = useAuth();
+  const [ask, setAsk] = useState(shouldAskToInstall);
+  if (loading) return <FullScreenLoader />;
+  if (!user && ask) return <InstallGate onSkip={() => setAsk(false)} />;
+  return <>{children}</>;
+}
+
 export default function App() {
   if (!firebaseConfigured) return <NotConfigured />;
   return (
@@ -108,7 +120,9 @@ export default function App() {
         <QueueSync />
         <PushForeground />
         <div className="grain h-full">
-          <RouterProvider router={router} />
+          <InstallFirst>
+            <RouterProvider router={router} />
+          </InstallFirst>
         </div>
       </AuthProvider>
     </ToastProvider>

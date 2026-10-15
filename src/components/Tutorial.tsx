@@ -72,7 +72,7 @@ const STEPS: Step[] = [
     title: 'Wind, then shoot',
     body: (
       <>
-        Like a real disposable, wind the film wheel before each shot (you can turn this off in Profile). The shutter is final — there’s <b>no preview</b>. You get 3 seconds to undo, and can add a short note.
+        FilmRoll opens straight to the camera — the big button in the middle is the shutter. Like a real disposable, wind the film wheel before each shot (you can turn this off in Profile). The shutter is final — there’s <b>no preview</b>. You get 3 seconds to undo, and can add a short note.
       </>
     ),
     art: (
@@ -110,7 +110,7 @@ const STEPS: Step[] = [
   },
   {
     title: 'Keep the memories',
-    body: 'React, comment, save private favorites and download the originals. Developed rolls live in Albums forever, and old ones resurface on their anniversaries.',
+    body: 'React, comment, save private favorites and download the originals. Developed rolls live under Groups → Past rolls forever, and old ones resurface on their anniversaries.',
     art: (
       <div className="flex gap-2 text-3xl">
         {['❤️', '😂', '🥹', '📸'].map((e) => <span key={e} className="grid size-14 place-items-center rounded-full bg-cream shadow-soft">{e}</span>)}

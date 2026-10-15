@@ -1,100 +1,44 @@
-import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { Bell, Plus, Ticket } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
-import { useActiveRolls, useDevelopedRolls, useMyGroups, useNotifications } from '@/hooks/useData';
-import { AvatarStack, Button, EmptyState, Field, Sheet, Spinner, TextInput } from '@/components/ui';
-import { DisposableCamera, FilmCanister } from '@/components/film';
-import { seen } from '@/lib/format';
-import { GROUP_THEMES } from '@shared/constants';
-import { developLabel, shotsRemaining } from '@shared/rolls';
-import { normalizeInviteCode } from '@shared/validation';
-import type { GroupDoc, RollDoc } from '@shared/types';
+import { Button, FullScreenLoader } from '@/components/ui';
+import { DisposableCamera } from '@/components/film';
+import { ProfileButton } from '@/components/AppShell';
+import { PENDING_INVITE_KEY } from '@/components/InstallGate';
+import { Camera, useCameraSelection } from './CameraPage';
+import { JoinSheet, NoGroups, greeting, themeOf } from './GroupsPage';
 
-function greeting() {
-  const h = new Date().getHours();
-  return h < 5 ? 'Up late' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
-}
-
-export function themeOf(g: Pick<GroupDoc, 'theme'>) {
-  return GROUP_THEMES.find((t) => t.id === g.theme) ?? GROUP_THEMES[0];
-}
-
-function GroupCard({ group, roll }: { group: GroupDoc; roll?: RollDoc }) {
-  const t = themeOf(group);
-  const nav = useNavigate();
-  const active = roll && (roll.status === 'active' || roll.status === 'developing');
-  return (
-    <article className="overflow-hidden rounded-[26px] shadow-soft" style={{ background: t.bg, color: t.fg }}>
-      <Link to={`/g/${group.id}`} className="block px-5 pb-3 pt-5">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h2 className="truncate font-display text-2xl font-semibold">{group.name}</h2>
-            <p className="text-sm opacity-75">{group.memberCount} {group.memberCount === 1 ? 'friend' : 'friends'} · {group.developedCount} developed</p>
-          </div>
-          <AvatarStack people={group.memberPreview.map((m) => ({ uid: m.uid, name: m.name, photoURL: m.photoURL }))} size={28} max={4} />
-        </div>
-        {active && roll ? (
-          <div className="mt-4 flex items-center gap-4">
-            <DisposableCamera preset={roll.preset} remaining={shotsRemaining(roll)} width={112} className="shrink-0" />
-            <div className="min-w-0 flex-1">
-              <p className="line-clamp-2 font-semibold leading-snug">{roll.name}</p>
-              <p className="font-mono text-sm">{roll.exposuresUsed} / {roll.capacity} memories captured</p>
-              <p className="text-sm opacity-75">{roll.status === 'developing' ? 'Developing now…' : developLabel(roll)}</p>
-            </div>
-          </div>
-        ) : (
-          <p className="mt-4 rounded-2xl bg-black/5 px-4 py-3 text-sm">No roll in the camera. Start one for the group.</p>
-        )}
-      </Link>
-      <div className="flex gap-2 px-5 pb-5">
-        {active && roll?.status === 'active' ? (
-          <Button size="sm" variant="dark" onClick={() => nav(`/camera?g=${group.id}`)}>Take a shot</Button>
-        ) : (
-          <Button size="sm" variant="dark" onClick={() => nav(`/g/${group.id}/new-roll`)}>Start a roll</Button>
-        )}
-        <Button size="sm" variant="ghost" className="!text-current" onClick={() => nav(`/g/${group.id}`)}>Open</Button>
-      </div>
-    </article>
-  );
-}
-
-export function JoinSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const [code, setCode] = useState('');
-  const nav = useNavigate();
-  const normalized = normalizeInviteCode(code);
-  return (
-    <Sheet open={open} onClose={onClose} title="Join a group">
-      <form
-        className="space-y-4 pb-4"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (normalized) {
-            onClose();
-            nav(`/join/${normalized}`);
-          }
-        }}
-      >
-        <Field label="Invite code or link" hint="Ask a friend in the group to share their invite.">
-          <TextInput value={code} onChange={(e) => setCode(e.target.value)} placeholder="ABCD-EFGH" autoCapitalize="characters" autoComplete="off" className="font-mono uppercase tracking-widest" />
-        </Field>
-        <Button type="submit" className="w-full" disabled={!normalized}>Continue</Button>
-      </form>
-    </Sheet>
-  );
-}
-
+/**
+ * Home is the camera: open the app and you're looking through the viewfinder,
+ * with the tab bar's center button as the shutter. Brand-new accounts (no
+ * group yet) get a welcome screen instead.
+ */
 export default function HomePage() {
   const { profile } = useAuth();
-  const { groups, loading } = useMyGroups();
-  const { rolls } = useActiveRolls(groups);
-  const { rolls: developed } = useDevelopedRolls(groups.map((g) => g.id));
-  const { data: notes } = useNotifications();
-  const unread = notes.filter((n) => !n.read).length;
+  const [params] = useSearchParams();
+  const nav = useNavigate();
+  const sel = useCameraSelection(params.get('g'));
   const [joining, setJoining] = useState(false);
-  const fresh = developed.filter((r) => r.developedAt && Date.now() - r.developedAt < 21 * 864e5 && !seen(`opened:${r.id}`)).slice(0, 3);
-  const firstName = profile?.displayName.split(' ')[0] ?? '';
 
+  // An invite opened before installing (Android shares storage with the installed app).
+  useEffect(() => {
+    try {
+      const code = localStorage.getItem(PENDING_INVITE_KEY);
+      if (code) {
+        localStorage.removeItem(PENDING_INVITE_KEY);
+        nav(`/join/${code}`);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [nav]);
+
+  if (sel.loading) return <FullScreenLoader />;
+  if (sel.current) {
+    return <Camera key={sel.current.roll.id} embedded roll={sel.current.roll} group={sel.current.group} choices={sel.choices} onPick={sel.pick} />;
+  }
+
+  const firstName = profile?.displayName.split(' ')[0] ?? '';
   return (
     <div className="px-4">
       <header className="mb-1 flex items-center justify-between pb-3 pt-safe">
@@ -102,52 +46,34 @@ export default function HomePage() {
           <p className="font-mono text-[11px] uppercase tracking-[0.25em] text-ink-faint">FilmRoll</p>
           <h1 className="font-display text-[28px] font-semibold leading-tight">{greeting()}, {firstName}</h1>
         </div>
-        <Link to="/notifications" aria-label={`Notifications${unread ? `, ${unread} unread` : ''}`} className="relative grid size-11 place-items-center rounded-full active:bg-ink/5">
-          <Bell className="size-6" />
-          {unread > 0 && <span className="absolute right-1.5 top-1.5 grid min-w-5 place-items-center rounded-full bg-coral px-1 text-[11px] font-bold text-cream">{unread > 9 ? '9+' : unread}</span>}
-        </Link>
+        <ProfileButton />
       </header>
-
-      {fresh.map((r) => {
-        const g = groups.find((x) => x.id === r.groupId);
-        return (
-          <Link key={r.id} to={`/g/${r.groupId}/r/${r.id}`} className="mb-4 flex items-center gap-4 rounded-[24px] bg-ink p-4 text-cream shadow-soft">
-            <FilmCanister preset={r.preset} title={r.name} className="h-20 w-16 shrink-0" />
-            <div className="min-w-0">
-              <p className="font-mono text-[11px] uppercase tracking-widest text-amber">Your film is developed!</p>
-              <p className="truncate font-display text-xl font-semibold">{r.name}</p>
-              <p className="text-sm text-cream/70">{r.exposuresUsed} memories from {g?.name ?? 'your group'} — tap to reveal</p>
-            </div>
-          </Link>
-        );
-      })}
-
-      {loading ? (
-        <div className="grid place-items-center py-16"><Spinner /></div>
-      ) : groups.length === 0 ? (
-        <EmptyState
-          art={<DisposableCamera preset="softPastel" width={220} />}
-          title="Your first roll is waiting"
-          action={
-            <div className="flex flex-col gap-2">
-              <Link to="/g/new"><Button className="w-full" icon={<Plus className="size-5" />}>Start a group</Button></Link>
-              <Button variant="secondary" icon={<Ticket className="size-5" />} onClick={() => setJoining(true)}>Join with a code</Button>
-            </div>
-          }
-        >
-          Make a private group for your friends, or join one with an invite.
-        </EmptyState>
+      {sel.groups.length === 0 ? (
+        <NoGroups onJoin={() => setJoining(true)} />
       ) : (
-        <div className="space-y-4">
-          {groups.map((g) => <GroupCard key={g.id} group={g} roll={rolls.find((r) => r.groupId === g.id)} />)}
-          <div className="flex gap-2 pt-2">
-            <Link to="/g/new" className="flex-1"><Button variant="secondary" className="w-full" icon={<Plus className="size-5" />}>New group</Button></Link>
-            <Button variant="secondary" className="flex-1" icon={<Ticket className="size-5" />} onClick={() => setJoining(true)}>Join</Button>
+        <section className="space-y-4 pt-2">
+          <div className="flex flex-col items-center gap-3 py-4 text-center">
+            <DisposableCamera preset="classic35" remaining={0} width={180} />
+            <h2 className="font-display text-2xl font-semibold">No roll in the camera</h2>
+            <p className="max-w-xs text-ink-soft">Load a new roll in one of your groups and the camera’s ready to shoot.</p>
           </div>
-        </div>
+          <ul className="space-y-3">
+            {sel.groups.map((g) => {
+              const t = themeOf(g);
+              return (
+                <li key={g.id} className="flex items-center gap-3 rounded-[22px] px-4 py-3 shadow-soft" style={{ background: t.bg, color: t.fg }}>
+                  <Link to={`/g/${g.id}`} className="min-w-0 flex-1">
+                    <p className="truncate font-display text-lg font-semibold">{g.name}</p>
+                    <p className="text-sm opacity-75">{g.activeRollId ? 'Roll is developing…' : 'No roll loaded'}</p>
+                  </Link>
+                  {!g.activeRollId && <Button size="sm" variant="dark" onClick={() => nav(`/g/${g.id}/new-roll`)}>Start a roll</Button>}
+                </li>
+              );
+            })}
+          </ul>
+        </section>
       )}
       <JoinSheet open={joining} onClose={() => setJoining(false)} />
     </div>
   );
 }
-

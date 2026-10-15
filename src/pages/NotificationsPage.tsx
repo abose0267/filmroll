@@ -5,6 +5,7 @@ import { Bell } from 'lucide-react';
 import { useNotifications } from '@/hooks/useData';
 import { useAuth } from '@/hooks/useAuth';
 import { EmptyState, PageHeader, Spinner, cx } from '@/components/ui';
+import { ProfileButton } from '@/components/AppShell';
 import { db } from '@/lib/firebase';
 import { relativeTime } from '@/lib/format';
 
@@ -28,7 +29,7 @@ export default function NotificationsPage() {
 
   return (
     <div>
-      <PageHeader back="/" title="Notifications" />
+      <PageHeader title="Activity" right={<ProfileButton />} />
       <div className="px-4">
         {loading ? (
           <div className="grid place-items-center py-16"><Spinner /></div>

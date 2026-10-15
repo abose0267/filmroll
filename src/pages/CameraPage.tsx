@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import { CalendarDays, Camera as CameraIcon, Check, MapPin, RotateCcw, SwitchCamera, Volume2, VolumeX, X, Zap, ZapOff } from 'lucide-react';
+import { CalendarDays, Camera as CameraIcon, Check, ChevronDown, MapPin, RotateCcw, SwitchCamera, Volume2, VolumeX, X, Zap, ZapOff } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useActiveRolls, useMyGroups, useOnline } from '@/hooks/useData';
-import { Button, FullScreenLoader, IconButton, TextArea, TextInput, cx, useStatusBarColor, useToast } from '@/components/ui';
+import { Button, FullScreenLoader, IconButton, Sheet, TextArea, TextInput, cx, useStatusBarColor, useToast } from '@/components/ui';
+import { ProfileButton, useNavShutter } from '@/components/AppShell';
 import { DisposableCamera, FilmStrip } from '@/components/film';
 import { errorMessage } from '@/lib/api';
 import { decode } from '@/lib/image';
@@ -49,41 +50,80 @@ function writePref(key: string, v: boolean) {
   }
 }
 
-function RollPicker({ groups, rolls }: { groups: GroupDoc[]; rolls: RollDoc[] }) {
+const LAST_GROUP_KEY = 'filmroll:camera-group';
+function lastGroup(): string | null {
+  try {
+    return localStorage.getItem(LAST_GROUP_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export interface CameraChoice {
+  roll: RollDoc;
+  group: GroupDoc;
+}
+
+/**
+ * Which roll the camera is loaded with: the one asked for (?g=), else the last
+ * one you shot on, else any roll with exposures left. You can switch from the
+ * shutter view. A roll you just finished stays put so its "whole roll!" screen
+ * can play out.
+ */
+export function useCameraSelection(requested: string | null) {
+  const { groups, loading: gLoading } = useMyGroups();
+  const { rolls, loading: rLoading } = useActiveRolls(groups);
+  const [picked, setPicked] = useState<string | null>(() => requested ?? lastGroup());
+  useEffect(() => {
+    if (requested) setPicked(requested);
+  }, [requested]);
+  const pinned = useRef<RollDoc | null>(null);
+
+  const choices: CameraChoice[] = rolls
+    .filter((r) => r.status === 'active' && shotsRemaining(r) > 0)
+    .map((r) => ({ roll: r, group: groups.find((g) => g.id === r.groupId)! }))
+    .filter((c) => c.group);
+
+  const pickedRoll = picked ? rolls.find((r) => r.groupId === picked) : undefined;
+  let roll: RollDoc | null = null;
+  if (pickedRoll && pickedRoll.status === 'active' && (shotsRemaining(pickedRoll) > 0 || pinned.current?.id === pickedRoll.id)) roll = pickedRoll;
+  else if (pinned.current && pinned.current.groupId === picked) roll = pickedRoll ?? { ...pinned.current, status: 'developed' };
+  else if (!requested) roll = choices[0]?.roll ?? null;
+  if (roll?.status === 'active') pinned.current = roll;
+  const group = roll ? groups.find((g) => g.id === roll.groupId) ?? null : null;
+
+  const pick = useCallback((gid: string) => {
+    setPicked(gid);
+    try {
+      localStorage.setItem(LAST_GROUP_KEY, gid);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  return {
+    loading: gLoading || rLoading,
+    groups,
+    choices,
+    current: roll && group ? { roll, group } : null,
+    /** The roll asked for by ?g= is developing (no more shots). */
+    requestedDeveloping: !!requested && !!pickedRoll && pickedRoll.status !== 'active',
+    pick,
+  };
+}
+
+/** No roll to shoot on (full-screen camera). */
+function NothingLoaded({ groups }: { groups: GroupDoc[] }) {
   const nav = useNavigate();
-  const shootable = rolls.filter((r) => r.status === 'active' && shotsRemaining(r) > 0);
   return (
-    <main className="mx-auto min-h-full max-w-lg bg-body px-5 pb-safe pt-safe text-cream">
-      <div className="flex items-center justify-between py-2">
-        <h1 className="font-display text-2xl font-semibold">Which roll?</h1>
+    <main className="mx-auto flex min-h-full max-w-lg flex-col items-center justify-center gap-4 bg-body px-5 pb-safe pt-safe text-center text-cream">
+      <div className="fixed left-3 top-0 pt-safe">
         <IconButton label="Close camera" onClick={() => nav(-1)} className="text-cream active:bg-white/10"><X className="size-6" /></IconButton>
       </div>
-      {shootable.length === 0 ? (
-        <div className="flex flex-col items-center gap-4 py-16 text-center">
-          <DisposableCamera preset="classic35" width={220} />
-          <h2 className="font-display text-2xl">No roll in the camera</h2>
-          <p className="max-w-xs text-cream/70">{groups.length ? 'Start a roll in one of your groups to begin shooting.' : 'Create or join a group first.'}</p>
-          <Link to={groups.length ? `/g/${groups[0].id}` : '/'}><Button>{groups.length ? 'Go to my group' : 'Get started'}</Button></Link>
-        </div>
-      ) : (
-        <ul className="space-y-3 pt-4">
-          {shootable.map((r) => {
-            const g = groups.find((x) => x.id === r.groupId);
-            return (
-              <li key={r.id}>
-                <button onClick={() => nav(`/camera?g=${r.groupId}`, { replace: true })} className="flex w-full items-center gap-4 rounded-3xl bg-white/5 p-4 text-left ring-1 ring-white/10 active:bg-white/10">
-                  <DisposableCamera preset={r.preset} remaining={shotsRemaining(r)} width={110} />
-                  <span className="min-w-0">
-                    <span className="block truncate font-display text-xl">{g?.name}</span>
-                    <span className="block truncate text-cream/70">{r.name}</span>
-                    <span className="block font-mono text-sm text-amber">{shotsRemaining(r)} shots left</span>
-                  </span>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      )}
+      <DisposableCamera preset="classic35" width={220} />
+      <h1 className="font-display text-2xl">No roll in the camera</h1>
+      <p className="max-w-xs text-cream/70">{groups.length ? 'Start a roll in one of your groups to begin shooting.' : 'Create or join a group first.'}</p>
+      <Link to="/groups"><Button>Go to my groups</Button></Link>
     </main>
   );
 }
@@ -91,39 +131,56 @@ function RollPicker({ groups, rolls }: { groups: GroupDoc[]; rolls: RollDoc[] })
 export default function CameraPage() {
   const [params] = useSearchParams();
   const gid = params.get('g');
-  const { groups, loading: gLoading } = useMyGroups();
-  const { rolls, loading: rLoading } = useActiveRolls(groups);
-  const roll = useMemo(() => {
-    if (gid) return rolls.find((r) => r.groupId === gid) ?? null;
-    const shootable = rolls.filter((r) => r.status === 'active' && shotsRemaining(r) > 0);
-    return shootable.length === 1 ? shootable[0] : null;
-  }, [gid, rolls]);
-  // Keep the camera mounted after the last shot develops the roll, so the
-  // "captured" screen can finish instead of jumping to the picker.
-  const pinned = useRef<RollDoc | null>(null);
-  if (roll && roll.status === 'active') pinned.current = roll;
-  if (gLoading || rLoading) return <div className="h-full bg-body"><FullScreenLoader /></div>;
-  if (pinned.current && (!roll || roll.id === pinned.current.id) && (!gid || gid === pinned.current.groupId)) {
-    const r = roll ?? { ...pinned.current, status: 'developed' as const };
-    const g = groups.find((x) => x.id === r.groupId);
-    if (g) return <Camera key={r.id} roll={r} group={g} />;
+  const sel = useCameraSelection(gid);
+  if (sel.loading) return <div className="h-full bg-body"><FullScreenLoader /></div>;
+  if (sel.current) return <Camera key={sel.current.roll.id} roll={sel.current.roll} group={sel.current.group} choices={sel.choices} onPick={sel.pick} />;
+  if (sel.requestedDeveloping && gid) {
+    return (
+      <main className="flex h-full flex-col items-center justify-center gap-4 bg-body px-6 text-center text-cream">
+        <h1 className="font-display text-2xl">This roll is developing</h1>
+        <p className="text-cream/70">No more shots — the reveal is almost here.</p>
+        <Link to={`/g/${gid}`}><Button>Back to group</Button></Link>
+      </main>
+    );
   }
-  if (!roll || roll.status !== 'active') {
-    if (gid && roll) {
-      return (
-        <main className="flex h-full flex-col items-center justify-center gap-4 bg-body px-6 text-center text-cream">
-          <h1 className="font-display text-2xl">This roll is developing</h1>
-          <p className="text-cream/70">No more shots — the reveal is almost here.</p>
-          <Link to={`/g/${gid}`}><Button>Back to group</Button></Link>
-        </main>
-      );
-    }
-    return <RollPicker groups={groups} rolls={rolls} />;
-  }
-  return null;
+  return <NothingLoaded groups={sel.groups} />;
 }
 
-function Camera({ roll, group }: { roll: RollDoc; group: GroupDoc }) {
+/** Switch rolls right from the shutter view. */
+function RollSwitcher({ open, onClose, choices, current, onPick }: { open: boolean; onClose: () => void; choices: CameraChoice[]; current: RollDoc; onPick: (gid: string) => void }) {
+  return (
+    <Sheet open={open} onClose={onClose} title="Load the camera with…">
+      <ul className="space-y-2 pb-3">
+        {choices.map(({ roll: r, group: g }) => {
+          const on = r.id === current.id;
+          return (
+            <li key={r.id}>
+              <button
+                onClick={() => {
+                  onClose();
+                  if (!on) onPick(r.groupId);
+                }}
+                aria-current={on}
+                className={cx('flex w-full items-center gap-4 rounded-3xl p-3 text-left ring-1 active:bg-paper-2', on ? 'bg-paper-2 ring-coral' : 'ring-line')}
+              >
+                <DisposableCamera preset={r.preset} remaining={shotsRemaining(r)} width={84} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-display text-lg font-semibold">{g.name}</span>
+                  <span className="block truncate text-sm text-ink-soft">{r.name}</span>
+                  <span className="block font-mono text-sm text-coral-deep">{shotsRemaining(r)} shots left</span>
+                </span>
+                {on && <Check className="size-5 shrink-0 text-coral" />}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      <Link to="/groups" onClick={onClose} className="mb-3 flex h-12 items-center justify-center rounded-full text-sm font-semibold text-ink-soft ring-1 ring-line active:bg-paper-2">Load a roll in another group</Link>
+    </Sheet>
+  );
+}
+
+export function Camera({ roll, group, choices, onPick, embedded }: { roll: RollDoc; group: GroupDoc; choices: CameraChoice[]; onPick: (gid: string) => void; embedded?: boolean }) {
   const nav = useNavigate();
   const toast = useToast();
   const reduce = useReducedMotion();
@@ -404,20 +461,59 @@ function Camera({ roll, group }: { roll: RollDoc; group: GroupDoc }) {
   const status = snap?.state;
   const committed = status === 'committing' || status === 'saved';
   const shutterReady = wound && stage === 'camera' && remaining > 0;
+  const [picking, setPicking] = useState(false);
+  const canSwitch = stage === 'camera' && (choices.length > 1 || (choices.length === 1 && choices[0].roll.id !== roll.id));
+
+  // On the home tab the big center button of the tab bar is the shutter.
+  const navShutter = embedded && !viewportLandscape;
+  const pressRef = useRef(shutterPressed);
+  pressRef.current = shutterPressed;
+  const fire = useCallback(() => pressRef.current(), []);
+  useNavShutter(navShutter && stage === 'camera' ? { ready: shutterReady, label: wound ? 'Take photo' : 'Take photo (wind the film first)', fire } : null);
+
+  const compact = viewportLandscape || navShutter;
+  const flashBtn = (
+    <button className="flex items-center gap-1.5 rounded-full px-3 py-2 text-xs font-semibold active:bg-white/10" onClick={() => { setFlash(!flash); writePref('flash', !flash); }} aria-pressed={flash} aria-label={`Flash ${flash ? 'on' : 'off'}`}>
+      {flash ? <Zap className="size-5 text-amber" style={turn} /> : <ZapOff className="size-5" style={turn} />} <span className={cx(compact && 'sr-only')}>Flash {flash ? 'on' : 'off'}</span>
+    </button>
+  );
+  const soundBtn = (
+    <button className="flex items-center gap-1.5 rounded-full px-3 py-2 text-xs font-semibold active:bg-white/10" onClick={() => { setSound(!sound); writePref('sound', !sound); }} aria-pressed={sound} aria-label="Sound">
+      {sound ? <Volume2 className="size-5" style={turn} /> : <VolumeX className="size-5" style={turn} />} <span className={cx(compact && 'sr-only')}>Sound</span>
+    </button>
+  );
+
+  const counter = () => (
+    <div className="relative grid h-9 min-w-14 place-items-center rounded-lg bg-black px-2 font-mono text-lg text-amber shadow-inner" style={turn} aria-label={`${remaining} exposures left${pendingSaves ? `, saving ${pendingSaves}` : ''}`}>
+      {String(remaining).padStart(2, '0')}
+      {(pendingSaves > 0 || waiting > 0) && <span className="absolute -right-1 -top-1 size-2.5 animate-pulse rounded-full bg-coral ring-2 ring-body" title="Saving in the background" />}
+    </div>
+  );
 
   return (
-    <main className="fixed inset-0 flex flex-col bg-body text-cream" aria-label="Camera">
+    <main
+      className={cx('fixed inset-x-0 top-0 flex flex-col bg-body text-cream', !embedded && 'bottom-0')}
+      style={embedded ? { bottom: 'calc(var(--nav-h) + var(--safe-bottom))' } : undefined}
+      aria-label="Camera"
+    >
       {/* top bar */}
       <div className="flex items-center gap-2 px-3 pt-safe">
-        <IconButton label="Close camera" onClick={leave} className="text-cream active:bg-white/10"><X className="size-6" /></IconButton>
-        <div className="min-w-0 flex-1 text-center">
-          <p className="truncate text-sm font-semibold">{group.name}</p>
-          <p className="truncate text-xs text-cream/60">{roll.name} · <span className="font-mono">{PRESETS[roll.preset].code}</span></p>
-        </div>
-        <div className="relative grid h-9 min-w-14 place-items-center rounded-lg bg-black px-2 font-mono text-lg text-amber shadow-inner" style={turn} aria-label={`${remaining} exposures left${pendingSaves ? `, saving ${pendingSaves}` : ''}`}>
-          {String(remaining).padStart(2, '0')}
-          {(pendingSaves > 0 || waiting > 0) && <span className="absolute -right-1 -top-1 size-2.5 animate-pulse rounded-full bg-coral ring-2 ring-body" title="Saving in the background" />}
-        </div>
+        {!embedded && <IconButton label="Close camera" onClick={leave} className="text-cream active:bg-white/10"><X className="size-6" /></IconButton>}
+        {embedded && counter()}
+        <button
+          type="button"
+          disabled={!canSwitch}
+          onClick={() => setPicking(true)}
+          className="min-w-0 flex-1 rounded-2xl px-2 py-1 text-center active:bg-white/10 disabled:active:bg-transparent"
+          aria-label={canSwitch ? `Shooting on ${group.name}, ${roll.name}. Switch roll` : undefined}
+        >
+          <span className="flex items-center justify-center gap-1 text-sm font-semibold">
+            <span className="truncate">{group.name}</span>
+            {canSwitch && <ChevronDown className="size-4 shrink-0 text-cream/70" />}
+          </span>
+          <span className="block truncate text-xs text-cream/60">{roll.name} · <span className="font-mono">{PRESETS[roll.preset].code}</span></span>
+        </button>
+        {embedded ? <ProfileButton /> : counter()}
       </div>
       {(waiting > 0 || !online) && (
         <p className="mx-auto mt-1 rounded-full bg-white/10 px-3 py-1 text-center text-xs text-cream/80" role="status">
@@ -430,8 +526,12 @@ function Camera({ roll, group }: { roll: RollDoc; group: GroupDoc }) {
       <AnimatePresence mode="wait">
         {stage === 'camera' && (
           <motion.section key="cam" className={cx('flex min-h-0 flex-1', viewportLandscape ? 'flex-row' : 'flex-col')} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <div className={cx('flex min-h-0 flex-1 items-center justify-center', viewportLandscape ? 'py-2 pl-4' : 'px-5 py-4')}>
-              <div className={cx('relative max-h-full overflow-hidden rounded-[22px] bg-black shadow-[inset_0_0_0_6px_#1a1816]', viewportLandscape ? 'aspect-[4/3] h-full' : 'aspect-[3/4] w-full max-w-md')}>
+            {/* the viewfinder is the largest 3:4 frame that fits the space left over */}
+            <div className={cx('flex min-h-0 flex-1 items-center justify-center', viewportLandscape ? 'py-2 pl-4' : 'px-5 py-3 [container-type:size]')}>
+              <div
+                className={cx('relative max-h-full overflow-hidden rounded-[22px] bg-black shadow-[inset_0_0_0_6px_#1a1816]', viewportLandscape ? 'aspect-[4/3] h-full' : 'aspect-[3/4]')}
+                style={viewportLandscape ? undefined : { width: 'min(100cqw, 75cqh, 28rem)' }}
+              >
                 <video
                   ref={(el) => {
                     // The section re-mounts after the note screen; re-attach the live stream.
@@ -479,25 +579,25 @@ function Camera({ roll, group }: { roll: RollDoc; group: GroupDoc }) {
             </div>
 
             <div className={cx('flex', viewportLandscape ? 'w-48 flex-col-reverse justify-center pr-safe' : 'flex-col')}>
-              <div className={cx('flex items-center justify-center text-cream/80', viewportLandscape ? 'gap-1 pt-3' : 'gap-6 pb-3')}>
-                <button className="flex items-center gap-1.5 rounded-full px-3 py-2 text-xs font-semibold active:bg-white/10" onClick={() => { setFlash(!flash); writePref('flash', !flash); }} aria-pressed={flash}>
-                  {flash ? <Zap className="size-4 text-amber" style={turn} /> : <ZapOff className="size-4" style={turn} />} <span className={cx(viewportLandscape && 'sr-only')}>Flash {flash ? 'on' : 'off'}</span>
-                </button>
+              <div className={cx('flex items-center justify-center text-cream/80', viewportLandscape ? 'gap-1 pt-3' : 'gap-6 pb-3', navShutter && 'hidden')}>
+                {flashBtn}
                 <span className="flex items-center gap-1.5 text-xs"><CalendarDays className="size-4" style={turn} /> <span className={cx(viewportLandscape && 'sr-only')}>{roll.dateStamp ? 'Date stamp' : 'No stamp'}</span></span>
-                <button className="flex items-center gap-1.5 rounded-full px-3 py-2 text-xs font-semibold active:bg-white/10" onClick={() => { setSound(!sound); writePref('sound', !sound); }} aria-pressed={sound}>
-                  {sound ? <Volume2 className="size-4" style={turn} /> : <VolumeX className="size-4" style={turn} />} <span className={cx(viewportLandscape && 'sr-only')}>Sound</span>
-                </button>
+                {soundBtn}
               </div>
 
-              <div className={cx('flex items-center', viewportLandscape ? 'flex-col justify-center gap-4' : 'justify-around px-6 pb-safe pt-4')}>
+              <div className={cx('flex items-center', viewportLandscape ? 'flex-col justify-center gap-4' : navShutter ? 'justify-between px-6 pb-3 pt-1' : 'justify-around px-6 pb-safe pt-4')}>
                 <IconButton label="Switch camera" disabled={!canFlip || camState !== 'live'} onClick={() => setFacing(facing === 'user' ? 'environment' : 'user')} className="size-14 bg-white/10 text-cream active:bg-white/20 disabled:opacity-30"><SwitchCamera className="size-6" style={turn} /></IconButton>
-                <button
-                  onClick={shutterPressed}
-                  aria-label={wound ? 'Take photo' : 'Take photo (wind the film first)'}
-                  className={cx('grid size-[84px] place-items-center rounded-full bg-cream/15 ring-4 transition active:scale-90', shutterReady ? 'ring-cream/80' : 'ring-cream/25')}
-                >
-                  <span className={cx('size-[64px] rounded-full shadow-[inset_0_-4px_0_rgba(0,0,0,0.2)] transition-colors', shutterReady ? 'bg-coral' : 'bg-coral/35')} />
-                </button>
+                {navShutter ? (
+                  <div className="flex items-center gap-2 text-cream/80">{flashBtn}{soundBtn}</div>
+                ) : (
+                  <button
+                    onClick={shutterPressed}
+                    aria-label={wound ? 'Take photo' : 'Take photo (wind the film first)'}
+                    className={cx('grid size-[84px] place-items-center rounded-full bg-cream/15 ring-4 transition active:scale-90', shutterReady ? 'ring-cream/80' : 'ring-cream/25')}
+                  >
+                    <span className={cx('size-[64px] rounded-full shadow-[inset_0_-4px_0_rgba(0,0,0,0.2)] transition-colors', shutterReady ? 'bg-coral' : 'bg-coral/35')} />
+                  </button>
+                )}
                 {/* iOS asks for motion access on a tap; asking on the first wind keeps it from swallowing other buttons (like ✕) */}
                 {windOn ? (
                   <WindWheel wound={wound} onWound={() => setWound(true)} onEngage={enableTilt} sound={sound} nudge={nudge} vertical={viewportLandscape} />
@@ -583,6 +683,7 @@ function Camera({ roll, group }: { roll: RollDoc; group: GroupDoc }) {
       </AnimatePresence>
 
       <AnimatePresence>{screenFlash && <motion.div className="fixed inset-0 z-50 bg-white" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.08 }} />}</AnimatePresence>
+      <RollSwitcher open={picking} onClose={() => setPicking(false)} choices={choices} current={roll} onPick={onPick} />
       <input ref={nativeInput} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => { void fromPhoneCamera(e.target.files?.[0]); e.target.value = ''; }} />
     </main>
   );

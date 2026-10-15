@@ -13,7 +13,7 @@ import { cleanText, displayNameError } from '@shared/validation';
 import type { NotificationPrefs } from '@shared/types';
 import { uploadAvatar } from './OnboardingPage';
 import { disablePush, enablePush, pushStatus, type PushStatus } from '@/lib/push';
-import { themeOf } from './HomePage';
+import { themeOf } from './GroupsPage';
 
 const Tutorial = lazy(() => import('@/components/Tutorial'));
 
@@ -62,7 +62,7 @@ export default function ProfilePage() {
 
   return (
     <div>
-      <PageHeader title="Profile" />
+      <PageHeader back title="Profile" />
       <div className="space-y-6 px-4 pt-2">
         <div className="flex items-center gap-4">
           <button onClick={() => file.current?.click()} className="relative" aria-label="Change profile photo">
@@ -160,7 +160,7 @@ export default function ProfilePage() {
         </Section>
 
         <Section title="Memories">
-          <Toggle label="Resurface old rolls" description="Show “one year ago” moments in Albums." checked={profile.showMemories} onChange={(v) => save({ showMemories: v, notificationPrefs: { ...prefs, memories: v } })} />
+          <Toggle label="Resurface old rolls" description="Show “one year ago” moments in Past rolls." checked={profile.showMemories} onChange={(v) => save({ showMemories: v, notificationPrefs: { ...prefs, memories: v } })} />
         </Section>
 
         <Section title="FilmRoll">

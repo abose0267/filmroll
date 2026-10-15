@@ -50,7 +50,7 @@ export default function AlbumPage() {
   }, [rid]);
 
   if (gLoading || rLoading) return <FullScreenLoader />;
-  if (!group || !roll) return <EmptyState title="Album not found" action={<Link to="/albums"><Button variant="secondary">All albums</Button></Link>}>You may not be in this group anymore.</EmptyState>;
+  if (!group || !roll) return <EmptyState title="Album not found" action={<Link to="/groups?view=rolls"><Button variant="secondary">All albums</Button></Link>}>You may not be in this group anymore.</EmptyState>;
 
   if (!developed) {
     return (

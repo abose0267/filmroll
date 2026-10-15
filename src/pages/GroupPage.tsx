@@ -12,7 +12,7 @@ import { developLabel, shotsRemaining } from '@shared/rolls';
 import { PRESETS } from '@shared/presets';
 import { formatInviteCode } from '@shared/validation';
 import type { GroupDoc, MemberDoc, RollDoc } from '@shared/types';
-import { themeOf } from './HomePage';
+import { themeOf } from './GroupsPage';
 import PushPrompt from '@/components/PushPrompt';
 
 export function InviteSheet({ group, isAdmin, open, onClose }: { group: GroupDoc; isAdmin: boolean; open: boolean; onClose: () => void }) {
@@ -110,7 +110,7 @@ function ActiveRoll({ roll, members, myUid }: { roll: RollDoc; members: MemberDo
         ))}
       </div>
       {roll.status === 'active' && remaining > 0 && (
-        <Button size="lg" className="mt-5 w-full" onClick={() => nav(`/camera?g=${roll.groupId}`)}>
+        <Button size="lg" className="mt-5 w-full" onClick={() => nav(`/?g=${roll.groupId}`)}>
           Capture a memory
         </Button>
       )}
@@ -133,7 +133,7 @@ export default function GroupPage() {
 
   if (loading) return <FullScreenLoader />;
   if (!group || error) {
-    return <EmptyState title="Group not found" action={<Link to="/"><Button variant="secondary">Go home</Button></Link>}>You may have left this group, or the link is wrong.</EmptyState>;
+    return <EmptyState title="Group not found" action={<Link to="/groups"><Button variant="secondary">Go home</Button></Link>}>You may have left this group, or the link is wrong.</EmptyState>;
   }
   const t = themeOf(group);
   const isAdmin = me?.role === 'owner' || me?.role === 'admin';
@@ -144,7 +144,7 @@ export default function GroupPage() {
     <div>
       <div style={{ background: t.bg, color: t.fg }} className="overflow-visible rounded-b-[32px]">
       <PageHeader
-          back="/"
+          back="/groups"
           background={t.bg}
           color={t.fg}
           title={group.name}
@@ -187,7 +187,7 @@ export default function GroupPage() {
         <section aria-labelledby="archive">
           <div className="mb-3 flex items-end justify-between">
             <h2 id="archive" className="font-display text-xl font-semibold">Developed rolls</h2>
-            {developed.length > 0 && <Link to="/albums" className="text-sm font-semibold text-coral-deep">All albums</Link>}
+            {developed.length > 0 && <Link to="/groups?view=rolls" className="text-sm font-semibold text-coral-deep">All albums</Link>}
           </div>
           {rollsLoading ? (
             <Spinner />

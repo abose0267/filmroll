@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { Sparkles } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useDevelopedRolls, useMyGroups } from '@/hooks/useData';
-import { EmptyState, PageHeader, Segmented, Spinner } from '@/components/ui';
+import { EmptyState, Segmented, Spinner } from '@/components/ui';
 import { FilmCanister } from '@/components/film';
 import { dateRange, formatDate } from '@/lib/format';
 import { resurface } from '@shared/memories';
@@ -24,7 +24,8 @@ function RollTile({ roll, groupName }: { roll: RollDoc; groupName: string }) {
   );
 }
 
-export default function AlbumsPage() {
+/** Every developed roll across your groups (Groups → Past rolls). */
+export default function AlbumsContent() {
   const { profile } = useAuth();
   const { groups } = useMyGroups();
   const { rolls, loading } = useDevelopedRolls(groups.map((g) => g.id));
@@ -41,8 +42,7 @@ export default function AlbumsPage() {
 
   return (
     <div>
-      <PageHeader title="Albums" sub="Every roll your groups have developed" />
-      <div className="space-y-6 px-4 pt-2">
+      <div className="space-y-6">
         {memories.map((m) => {
           const r = rolls.find((x) => x.id === m.rollId)!;
           return (

@@ -55,10 +55,10 @@ export default function AboutPage() {
           <ol className="space-y-3">
             <Feature emoji="👥" title="1 · Make a private group">Invite-only. Share a link or an 8-letter code; nothing is public or searchable. You can be in several groups.</Feature>
             <Feature emoji="🎞️" title="2 · Load a roll">Pick 12, 24 or 36 shared exposures, a film look, and when it develops: when it’s full, on a date, or whichever comes first.</Feature>
-            <Feature emoji="📷" title="3 · Wind and shoot">Wind the film wheel, press the shutter — no preview, no retakes. You get 3 seconds to undo and can add a short note.</Feature>
+            <Feature emoji="📷" title="3 · Wind and shoot">FilmRoll opens straight to the camera. Tap the roll name to switch rolls, wind the film wheel, press the shutter — no preview, no retakes. You get 3 seconds to undo and can add a short note.</Feature>
             <Feature emoji="🙈" title="4 · No peeking">Every photo stays hidden from everyone, including you, until the roll develops. You only see how full the roll is and who’s shot.</Feature>
             <Feature emoji="✨" title="5 · Develop together">Everyone gets the reveal at the same moment: a developing animation, then a contact sheet of the whole roll.</Feature>
-            <Feature emoji="📚" title="6 · Keep it forever">React and comment, save private favorites, download originals. Albums keep every roll, and old ones resurface on their anniversaries.</Feature>
+            <Feature emoji="📚" title="6 · Keep it forever">React and comment, save private favorites, download originals. Every roll is kept under Groups → Past rolls, and old ones resurface on their anniversaries.</Feature>
           </ol>
         </section>
 
@@ -83,7 +83,7 @@ export default function AboutPage() {
             <Faq q="What if two of us take the last shot at once?">The roll never goes over its limit — one of you gets the last exposure and the other is told it’s full.</Faq>
             <Faq q="I don’t like winding before every shot.">Turn it off in Profile → Camera → “Wind the film before each shot”.</Faq>
             <Faq q="What happens if nobody shoots?">The roll still develops on its date — as an empty roll — and you can load a new one.</Faq>
-            <Faq q="Can I install it like an app?">Yes. On iPhone, tap Share → Add to Home Screen in Safari. On Android, use “Install app” in Chrome’s menu.</Faq>
+            <Faq q="Can I install it like an app?">Yes — and it works best that way (it opens full-screen and can notify you). On iPhone, tap Share → Add to Home Screen in Safari (on newer iPhones Share is inside the ••• menu). On Android, use “Install app” in Chrome’s menu.</Faq>
             <Faq q="How do I delete my data?">Profile → Delete account removes your profile, every photo you added, your comments, reactions and favorites, and removes you from your groups.</Faq>
           </div>
         </section>
