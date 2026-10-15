@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { Crown, LogOut, MoreHorizontal, Shield } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useGroup, useMembers, useMyMembership, useRoll } from '@/hooks/useData';
+import { GroupEncryption } from '@/components/Encryption';
 import { Avatar, Button, Field, FullScreenLoader, IconButton, PageHeader, Segmented, Sheet, TextInput, Toggle, cx, useToast } from '@/components/ui';
 import { api, errorMessage } from '@/lib/api';
 import { formatDate, fromLocalInput, toLocalInput } from '@/lib/format';
@@ -89,6 +90,12 @@ export default function GroupSettingsPage() {
             </div>
           </Section>
         )}
+
+        <Section title="Privacy">
+          <div className="py-3">
+            <GroupEncryption on={!!group.settings.e2ee} canEdit={isAdmin} onChange={async (v) => void (await api.updateGroup({ groupId: group.id, settings: { e2ee: v } }))} />
+          </div>
+        </Section>
 
         {isAdmin && (
           <Section title="Monthly roll">

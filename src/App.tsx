@@ -6,6 +6,7 @@ import AppShell, { OfflineBanner } from '@/components/AppShell';
 import { firebaseConfigured } from '@/lib/firebase';
 import LandingPage from '@/pages/LandingPage';
 import { PushForeground, QueueSync } from '@/lib/queueSync';
+import { KeySteward } from '@/components/Encryption';
 import HomePage from '@/pages/HomePage';
 import InstallGate from '@/components/InstallGate';
 import { shouldAskToInstall } from '@/lib/install';
@@ -119,6 +120,7 @@ export default function App() {
         <StatusBarBackdrop />
         <QueueSync />
         <PushForeground />
+        <KeySteward />
         <div className="grain h-full">
           <InstallFirst>
             <RouterProvider router={router} />

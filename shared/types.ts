@@ -51,6 +51,8 @@ export interface GroupSettings {
   shareHistory: boolean;
   /** Load a new roll automatically every month. */
   autoRoll?: AutoRollSettings;
+  /** Opt-in end-to-end encryption: new photos and notes are sealed on members' phones. */
+  e2ee?: boolean;
 }
 
 export interface GroupDoc {
@@ -156,6 +158,10 @@ export interface PhotoDoc {
   original: PhotoVariantInfo;
   display: PhotoVariantInfo;
   thumb: PhotoVariantInfo;
+  /** End-to-end encrypted: the files are sealed with this device key (see shared/sealed.ts). */
+  e2ee?: { keyId: string };
+  /** Sealed caption + location (caption/location are then empty on the server). */
+  noteEnc?: string;
 }
 
 export interface CommentDoc {

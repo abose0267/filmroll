@@ -73,6 +73,28 @@ service cloud.firestore {
           && recent(request.resource.data.createdAt);
       }
 
+      // End-to-end encryption: this user's devices and their PUBLIC keys (private keys never leave the device).
+      match /devices/{deviceId} {
+        allow read: if signedIn();
+        allow create: if isSelf(uid)
+          && request.resource.data.keys().hasOnly(['id', 'publicKey', 'createdAt'])
+          && request.resource.data.id == deviceId && deviceId.matches('[A-Za-z0-9_-]{8,40}')
+          && request.resource.data.publicKey is map && request.resource.data.publicKey.keys().hasOnly(['x', 'y'])
+          && isStr(request.resource.data.publicKey.x, 64) && isStr(request.resource.data.publicKey.y, 64)
+          && recent(request.resource.data.createdAt);
+        allow update: if false;
+        allow delete: if isSelf(uid);
+      }
+
+      // The user's key backup, encrypted with their recovery code (unreadable without it).
+      match /private/{docId} {
+        allow read: if isSelf(uid) && docId == 'keyBackup';
+        allow write: if isSelf(uid) && docId == 'keyBackup'
+          && request.resource.data.keys().hasOnly(['iv', 'data', 'count', 'updatedAt'])
+          && isStr(request.resource.data.iv, 32) && isStr(request.resource.data.data, 900000)
+          && request.resource.data.count is int && request.resource.data.updatedAt is int;
+      }
+
       // Private favourites: only for photos the user can actually see.
       match /favorites/{fid} {
         allow read, delete: if isSelf(uid);
@@ -94,6 +116,23 @@ service cloud.firestore {
         allow read, write: if false;
       }
 
+      // A device that's missing roll keys asks the group; other members' apps answer by wrapping them for it.
+      // Doc id = deviceId_rollId.
+      match /keyRequests/{reqId} {
+        allow read, delete: if isMember(gid);
+        allow create: if isMember(gid)
+          && request.resource.data.keys().hasOnly(['groupId', 'rollId', 'uid', 'deviceId', 'keyIds', 'createdAt'])
+          && request.resource.data.uid == request.auth.uid && request.resource.data.groupId == gid
+          && reqId == request.resource.data.deviceId + '_' + request.resource.data.rollId
+          && isStr(request.resource.data.rollId, 64) && isStr(request.resource.data.deviceId, 40)
+          && request.resource.data.keyIds is list && request.resource.data.keyIds.size() <= 100
+          && recent(request.resource.data.createdAt);
+        allow update: if isMember(gid)
+          && request.resource.data.keyIds is list && request.resource.data.keyIds.size() <= 100
+          && (changedOnly(['keyIds'])
+            || (resource.data.uid == request.auth.uid && changedOnly(['keyIds', 'createdAt']) && recent(request.resource.data.createdAt)));
+      }
+
       match /members/{uid} {
         allow read: if isMember(gid);
         allow write: if false;
@@ -105,6 +144,21 @@ service cloud.firestore {
 
         match /reservations/{resId} {
           allow read, write: if false;
+        }
+
+        // A roll key locked ("wrapped") for one member device. Only that device's private key can open it,
+        // so members may read these; doc id = keyId_deviceId. Written once, never changed.
+        match /keys/{wrapId} {
+          allow read: if isMember(gid);
+          allow create: if isMember(gid)
+            && request.resource.data.keys().hasOnly(['keyId', 'deviceId', 'uid', 'from', 'eph', 'iv', 'wrapped', 'createdAt'])
+            && wrapId == request.resource.data.keyId + '_' + request.resource.data.deviceId
+            && request.resource.data.from == request.auth.uid
+            && exists(/databases/$(database)/documents/groups/$(gid)/members/$(request.resource.data.uid))
+            && isStr(request.resource.data.keyId, 40) && isStr(request.resource.data.deviceId, 40)
+            && request.resource.data.eph is map && isStr(request.resource.data.iv, 32) && isStr(request.resource.data.wrapped, 200)
+            && recent(request.resource.data.createdAt);
+          allow update, delete: if false;
         }
 
         match /photos/{pid} {

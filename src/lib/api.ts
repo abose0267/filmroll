@@ -26,10 +26,10 @@ export const api = {
   reserveExposure: fn<{ groupId: string; rollId: string; requestId: string }, { reservationId: string; expiresAt: number; uploadPrefix: string }>('reserveExposure'),
   releaseExposure: fn<{ groupId: string; rollId: string; reservationId: string }, { released: boolean }>('releaseExposure'),
   finalizeExposure: fn<
-    { groupId: string; rollId: string; reservationId: string; caption: string; location: string; capturedAt: number; clientNow: number; preset: PresetId; queued?: boolean; sizes: { original: Size; display: Size; thumb: Size } },
+    { groupId: string; rollId: string; reservationId: string; e2ee?: { keyId: string }; noteEnc?: string; caption?: string; location?: string; capturedAt: number; clientNow: number; preset: PresetId; queued?: boolean; sizes: { original: Size; display: Size; thumb: Size } },
     { photoId: string; duplicate: boolean; remaining: number; status: string }
   >('finalizeExposure'),
-  setPhotoNote: fn<{ groupId: string; rollId: string; photoId: string; caption: string; location: string }, { ok: true }>('setPhotoNote'),
+  setPhotoNote: fn<{ groupId: string; rollId: string; photoId: string; noteEnc?: string; caption?: string; location?: string }, { ok: true }>('setPhotoNote'),
   deleteAccount: fn<{ confirm: 'DELETE' }, { photos: number; groups: number }>('deleteAccount'),
   amIAdmin: fn<Record<string, never>, { admin: boolean }>('amIAdmin'),
   getAnalytics: fn<Record<string, never>, Analytics>('getAnalytics'),

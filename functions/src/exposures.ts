@@ -13,7 +13,7 @@
  * RESERVATION_TTL_MS and the sweeper gives the slot back.
  */
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
-import { FieldValue, bucket, db, photosCol, reservationsCol, rollRef } from './admin';
+import { FieldValue, bucket, db, groupRef, photosCol, reservationsCol, rollRef } from './admin';
 import { REGION } from './config';
 import { HOUR, docId, newId, rateLimit, requireAuth, requireMember } from './util';
 import { advanceRoll } from './develop';
@@ -22,7 +22,8 @@ import { CAPTURE_MAX_AGE_MS, QUEUED_MAX_AGE_MS, LIMITS, MAX_PENDING_PER_USER, RE
 import { acceptsFinalization, newMilestones, reserveDenial, shotsRemaining } from '@shared/rolls';
 import { isPresetId } from '@shared/presets';
 import { cleanText, sniffImage } from '@shared/validation';
-import type { PhotoDoc, PhotoVariantInfo, ReservationDoc, RollDoc } from '@shared/types';
+import { KEY_ID, SEALED_CONTENT_TYPE, SEALED_NOTE_MAX, parseSealed } from '@shared/sealed';
+import type { GroupDoc, PhotoDoc, PhotoVariantInfo, ReservationDoc, RollDoc } from '@shared/types';
 
 const opts = { region: REGION };
 /** The hot path of every shot: a full vCPU (default is a fraction) keeps it snappy. */
@@ -95,13 +96,23 @@ export async function expireReservation(gid: string, rid: string, resId: string,
   return true;
 }
 
-async function inspect(path: string, v: Variant): Promise<{ bytes: number; contentType: string }> {
+/** Room for the sealed header + GCM tag on top of the image limits. */
+const SEALED_OVERHEAD = 128;
+
+async function inspect(path: string, v: Variant, sealedKeyId: string | null): Promise<{ bytes: number; contentType: string }> {
   const file = bucket().file(path);
   const [exists] = await file.exists();
   if (!exists) throw new HttpsError('failed-precondition', `The ${v} image didn’t finish uploading. Try again.`);
   const [meta] = await file.getMetadata();
   const bytes = Number(meta.size ?? 0);
-  if (!bytes || bytes > MAX_BYTES[v]) throw new HttpsError('invalid-argument', 'That photo is too large.');
+  if (!bytes || bytes > MAX_BYTES[v] + (sealedKeyId ? SEALED_OVERHEAD : 0)) throw new HttpsError('invalid-argument', 'That photo is too large.');
+  if (sealedKeyId) {
+    // End-to-end encrypted: we can only check it's sealed, with the key the client named.
+    const [head] = await file.download({ start: 0, end: 63 });
+    const parts = parseSealed(new Uint8Array(head));
+    if (!parts || parts.keyId !== sealedKeyId) throw new HttpsError('invalid-argument', 'That photo isn’t sealed correctly.');
+    return { bytes, contentType: SEALED_CONTENT_TYPE };
+  }
   const [head] = await file.download({ start: 0, end: 15 });
   const kind = sniffImage(new Uint8Array(head));
   if (!kind) throw new HttpsError('invalid-argument', 'That file isn’t a supported image.');
@@ -122,8 +133,9 @@ export const finalizeExposure = onCall(shotOpts, async (req) => {
   const { gid } = await requireMember(req.data?.groupId, uid);
   const rid = docId(req.data?.rollId, 'roll');
   const resId = docId(req.data?.reservationId, 'reservation');
-  const caption = cleanText(req.data?.caption, LIMITS.caption, { multiline: true });
-  const location = cleanText(req.data?.location, LIMITS.location);
+  const sealed = parseE2ee(req.data);
+  const caption = sealed ? '' : cleanText(req.data?.caption, LIMITS.caption, { multiline: true });
+  const location = sealed ? '' : cleanText(req.data?.location, LIMITS.location);
   const now = Date.now();
   // Only fresh shots: measure the photo's age on the client's own clock (immune
   // to device clock drift), then re-base the timestamp onto server time.
@@ -145,9 +157,11 @@ export const finalizeExposure = onCall(shotOpts, async (req) => {
   if (res.status === 'finalized') return { photoId: res.photoId, duplicate: true, ...(await afterInfo(gid, rid)) };
   if (res.status === 'expired') throw new HttpsError('deadline-exceeded', 'That upload took too long and the exposure was released. Try again.');
 
-  // Check all three uploads at once (size, type, file signature).
-  const [roll0Snap, ...metas] = await Promise.all([rollRef(gid, rid).get(), ...VARIANTS.map((v) => inspect(uploadPath(uid, resId, v), v))]);
+  // Check all three uploads at once (size, type, file signature — or the sealed header).
+  const [roll0Snap, groupSnap, ...metas] = await Promise.all([rollRef(gid, rid).get(), groupRef(gid).get(), ...VARIANTS.map((v) => inspect(uploadPath(uid, resId, v), v, sealed?.keyId ?? null))]);
   const roll0 = roll0Snap.data() as RollDoc;
+  // A group that turned encryption on never takes unencrypted photos (e.g. from an old version of the app).
+  if ((groupSnap.data() as GroupDoc | undefined)?.settings.e2ee && !sealed) throw new HttpsError('failed-precondition', 'This group uses end-to-end encryption. Update FilmRoll and try again.');
   const info = {} as Record<Variant, PhotoVariantInfo>;
   VARIANTS.forEach((v, i) => (info[v] = { path: '', ...sizes[v], ...metas[i] }));
 
@@ -170,7 +184,7 @@ export const finalizeExposure = onCall(shotOpts, async (req) => {
       if (r.status !== 'pending') return { error: new HttpsError('deadline-exceeded', 'That upload took too long and the exposure was released. Try again.') };
       if (!acceptsFinalization(roll)) return { error: new HttpsError('failed-precondition', roll.status === 'developed' ? 'The roll was developed before your photo finished uploading.' : 'No exposures left on this roll.') };
       const frame = roll.exposuresUsed + 1;
-      const photo: PhotoDoc = { id: pid, groupId: gid, rollId: rid, uid, frame, caption, location, capturedAt, createdAt: now, preset, original: info.original, display: info.display, thumb: info.thumb };
+      const photo: PhotoDoc = { id: pid, groupId: gid, rollId: rid, uid, frame, caption, location, capturedAt, createdAt: now, preset, original: info.original, display: info.display, thumb: info.thumb, ...(sealed ? { e2ee: { keyId: sealed.keyId }, noteEnc: sealed.noteEnc } : {}) };
       tx.set(photosCol(gid, rid).doc(pid), photo);
       tx.update(resRef, { status: 'finalized', photoId: pid });
       tx.update(rollRef(gid, rid), {
@@ -209,6 +223,20 @@ export const finalizeExposure = onCall(shotOpts, async (req) => {
   return { photoId: pid, duplicate: false, ...(await afterInfo(gid, rid)) };
 });
 
+/** `{ e2ee: { keyId }, noteEnc }` from an encrypted shot; null for an unencrypted one. */
+function parseE2ee(data: unknown): { keyId: string; noteEnc: string } | null {
+  const d = data as { e2ee?: { keyId?: unknown }; noteEnc?: unknown } | undefined;
+  if (!d?.e2ee) return null;
+  const keyId = d.e2ee.keyId;
+  if (typeof keyId !== 'string' || !KEY_ID.test(keyId)) throw new HttpsError('invalid-argument', 'Invalid encryption key id.');
+  return { keyId, noteEnc: sealedNote(d.noteEnc) };
+}
+
+function sealedNote(v: unknown): string {
+  if (typeof v !== 'string' || v.length > SEALED_NOTE_MAX || !/^[A-Za-z0-9+/]+=*$/.test(v)) throw new HttpsError('invalid-argument', 'Invalid note.');
+  return v;
+}
+
 async function afterInfo(gid: string, rid: string) {
   const r = (await rollRef(gid, rid).get()).data() as RollDoc;
   return { remaining: shotsRemaining(r), status: r.status };
@@ -225,15 +253,18 @@ export const setPhotoNote = onCall(opts, async (req) => {
   const rid = docId(req.data?.rollId, 'roll');
   const pid = docId(req.data?.photoId, 'photo');
   await rateLimit(`note_${uid}`, 120, HOUR, 'Slow down a little — try again in a bit.');
-  const caption = cleanText(req.data?.caption, LIMITS.caption, { multiline: true });
-  const location = cleanText(req.data?.location, LIMITS.location);
+  const noteEnc = req.data?.noteEnc !== undefined ? sealedNote(req.data.noteEnc) : null;
+  const caption = noteEnc ? '' : cleanText(req.data?.caption, LIMITS.caption, { multiline: true });
+  const location = noteEnc ? '' : cleanText(req.data?.location, LIMITS.location);
   await db.runTransaction(async (tx) => {
     const [rollSnap, photoSnap] = await Promise.all([tx.get(rollRef(gid, rid)), tx.get(photosCol(gid, rid).doc(pid))]);
     const roll = rollSnap.data() as RollDoc | undefined;
     const photo = photoSnap.data() as PhotoDoc | undefined;
     if (!roll || !photo || photo.uid !== uid) throw new HttpsError('not-found', 'That shot wasn’t found.');
     if (roll.status === 'developed' || roll.status === 'cancelled') throw new HttpsError('failed-precondition', 'This roll has already been developed.');
-    tx.update(photoSnap.ref, { caption, location });
+    // An encrypted shot only takes a sealed note (and an unencrypted one only a plain note).
+    if (!!photo.e2ee !== !!noteEnc) throw new HttpsError('invalid-argument', 'Invalid note.');
+    tx.update(photoSnap.ref, noteEnc ? { noteEnc } : { caption, location });
   });
   return { ok: true };
 });

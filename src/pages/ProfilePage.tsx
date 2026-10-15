@@ -4,6 +4,7 @@ import { doc, updateDoc } from 'firebase/firestore';
 import { BarChart3, Camera, ChevronRight, Info, LogOut, PlayCircle } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useMyGroups } from '@/hooks/useData';
+import { RecoveryCodeSection } from '@/components/Encryption';
 import { Avatar, Button, Field, PageHeader, Sheet, TextArea, TextInput, Toggle, useToast } from '@/components/ui';
 import { db } from '@/lib/firebase';
 import { api, errorMessage } from '@/lib/api';
@@ -149,6 +150,14 @@ export default function ProfilePage() {
             ))}
           </div>
         </Section>
+
+        {groups.some((g) => g.settings.e2ee) && (
+          <Section title="Encryption">
+            <div className="py-3">
+              <RecoveryCodeSection />
+            </div>
+          </Section>
+        )}
 
         <Section title="Camera">
           <Toggle

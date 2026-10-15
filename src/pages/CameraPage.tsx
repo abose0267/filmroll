@@ -325,7 +325,7 @@ export function Camera({ roll, group, choices, onPick, embedded }: { roll: RollD
     setLocation('');
     const offline = !navigator.onLine;
     setOfflineShot(offline);
-    const s = new Shot({ uid: user!.uid, groupId: roll.groupId, rollId: roll.id, preset: roll.preset, dateStamp: roll.dateStamp, seed: seedFrom(randomRequestId()), capturedAt: at, source: b, offline, onChange: setSnap });
+    const s = new Shot({ uid: user!.uid, groupId: roll.groupId, rollId: roll.id, preset: roll.preset, dateStamp: roll.dateStamp, seed: seedFrom(randomRequestId()), capturedAt: at, source: b, offline, encrypt: !!group.settings.e2ee, onChange: setSnap });
     shot.current = s;
     setSnap(s.snapshot);
     void s.start();
@@ -654,7 +654,9 @@ export function Camera({ roll, group, choices, onPick, embedded }: { roll: RollD
               ) : (
                 <Button size="lg" className="w-full" onClick={done}>Done</Button>
               )}
-              <p className="pb-4 text-center text-xs text-cream/50">No peeking — this shot stays undeveloped until the whole roll does.</p>
+              <p className="pb-4 text-center text-xs text-cream/50">
+                {group.settings.e2ee ? '🔒 End-to-end encrypted. ' : ''}No peeking — this shot stays undeveloped until the whole roll does.
+              </p>
             </div>
           </motion.section>
         )}

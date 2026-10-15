@@ -65,6 +65,7 @@ async function signUp({ page, name }) {
     await page.getByRole('button', { name: 'Start shooting' }).click();
   } else await tut.getByRole('button', { name: 'Skip' }).click();
   await tut.waitFor({ state: 'detached' });
+  await page.waitForTimeout(1000); // let the "tutorial done" write reach the server before the test reloads
   return email;
 }
 
@@ -162,11 +163,22 @@ try {
 
   console.log('Bob joins with the invite link');
   const bob = await newUser('Bob');
-  await signUp(bob);
+  const bobEmail = await signUp(bob);
   await bob.page.goto(`${BASE}/join/${code}`);
   await bob.page.getByRole('button', { name: /Join The Crew/ }).click();
   await bob.page.waitForURL(new RegExp(`/g/${gid}`));
   log(true, 'bob joined');
+
+  console.log('Alice turns on end-to-end encryption (opt-in, with pros and cons first)');
+  await alice.page.goto(`${BASE}/g/${gid}/settings`);
+  await alice.page.getByRole('button', { name: 'Turn on…' }).click();
+  await alice.page.getByText('The trade-offs').waitFor();
+  log(await alice.page.getByText(/gone for good/).isVisible(), 'the explainer spells out the trade-offs before turning it on');
+  await shot(alice.page, '04a-encryption-explainer');
+  await alice.page.getByRole('button', { name: 'Turn on encryption' }).click();
+  await alice.page.getByText('End-to-end encryption is on', { exact: true }).waitFor();
+  log(true, 'encryption turned on for the group');
+  await alice.page.goto(`${BASE}/g/${gid}`);
 
   console.log('Alice loads a 12-exposure roll');
   await alice.page.reload();
@@ -286,6 +298,23 @@ try {
   }
   await bob.page.waitForFunction(() => document.querySelectorAll('img[src^="blob:"]').length >= 12, null, { timeout: 30000 });
   await shot(bob.page, '13b-contact-sheet');
+  log(true, 'encrypted photos are unlocked on Bob’s phone');
+  // What the server actually holds: sealed bytes and no readable caption.
+  const stored = await bob.page.evaluate(async ([gid, rid, fs, base]) => {
+    const h = { Authorization: 'Bearer owner' };
+    const list = await fetch(`${fs}/v1/projects/demo-filmroll/databases/(default)/documents/groups/${gid}/rolls/${rid}/photos?pageSize=50`, { headers: h }).then((x) => x.json());
+    const out = [];
+    for (const d of list.documents) {
+      const f = d.fields;
+      const path = f.original.mapValue.fields.path.stringValue;
+      const st = base.startsWith('https') ? base : 'http://127.0.0.1:9199';
+      const bytes = new Uint8Array(await fetch(`${st}/v0/b/demo-filmroll.appspot.com/o/${encodeURIComponent(path)}?alt=media`, { headers: h }).then((x) => x.arrayBuffer()));
+      out.push({ caption: f.caption.stringValue, sealedNote: !!f.noteEnc, head: String.fromCharCode(...bytes.slice(0, 4)), jpeg: bytes[0] === 0xff && bytes[1] === 0xd8 });
+    }
+    return out;
+  }, [gid, rid, FIRESTORE, BASE]);
+  log(stored.length === 12 && stored.every((p) => p.head === 'FRE1' && !p.jpeg), `storage holds only sealed files (${stored.filter((p) => p.head === 'FRE1').length}/12), not images`);
+  log(stored.every((p) => p.caption === '' && p.sealedNote), 'the database holds no readable notes, only sealed ones');
   log((await bob.page.locator('img[src^="blob:"]').count()) >= 12, 'all 12 photos load after development');
   // shareable reveal clip (made on the device; downloads where there's no share sheet)
   await bob.page.evaluate(() => { navigator.canShare = undefined; });
@@ -315,6 +344,46 @@ try {
   await bob.page.keyboard.press('ArrowRight');
   await bob.page.getByText('Alice frame 2').waitFor();
   log(true, 'viewer navigates to the next frame');
+
+  console.log('Bob on a new phone: keys come from a friend’s phone');
+  const bob2 = await newUser('Bob2');
+  await bob2.page.goto(`${BASE}/signin?next=${encodeURIComponent(`/g/${gid}/r/${rid}`)}`);
+  await bob2.page.getByLabel('Email').fill(bobEmail);
+  await bob2.page.getByLabel('Password').fill('password123');
+  await bob2.page.getByRole('button', { name: 'Sign in' }).click();
+  await bob2.page.getByRole('heading', { name: 'Contact sheet' }).or(bob2.page.getByRole('button', { name: 'Open the album' })).waitFor({ timeout: 20000 });
+  if (await bob2.page.getByRole('button', { name: 'Open the album' }).isVisible()) await bob2.page.getByRole('button', { name: 'Open the album' }).click();
+  // Alice's app (open in another tab) answers the key request.
+  await alice.page.goto(`${BASE}/groups`);
+  await bob2.page.waitForFunction(() => document.querySelectorAll('img[src^="blob:"]').length >= 3, null, { timeout: 45000 });
+  log(true, 'a new device gets the keys from a friend’s open app and unlocks the photos');
+  await shot(bob2.page, '15b-new-device-unlocked');
+  await bob2.ctx.close();
+  pages.splice(pages.findIndex(([n]) => n === 'Bob2'), 1);
+
+  console.log('Recovery code');
+  await alice.page.goto(BASE + '/profile');
+  await alice.page.getByRole('button', { name: 'Make a recovery code' }).click();
+  const recovery = (await alice.page.getByTestId('recovery-code').textContent({ timeout: 20000 })).trim();
+  log(/^([A-Z2-9]{4}-){5}[A-Z2-9]{4}$/.test(recovery), 'a recovery code is shown once');
+  await shot(alice.page, '19c-recovery-code');
+  await alice.page.getByRole('button', { name: 'I’ve saved it' }).click();
+  await alice.page.getByText(/Backed up with your recovery code/).waitFor({ timeout: 20000 });
+  const alice2 = await newUser('Alice2');
+  await alice2.page.goto(`${BASE}/signin?next=%2Fprofile`);
+  await alice2.page.getByLabel('Email').fill(aliceEmail);
+  await alice2.page.getByLabel('Password').fill('password123');
+  await alice2.page.getByRole('button', { name: 'Sign in' }).click();
+  await alice2.page.getByRole('button', { name: 'Enter recovery code' }).click();
+  await alice2.page.getByPlaceholder('ABCD-EFGH-…').fill('AAAA-BBBB-CCCC-DDDD-EEEE-FFFF');
+  await alice2.page.getByRole('button', { name: 'Unlock my photos' }).click();
+  await alice2.page.getByText('That recovery code doesn’t match').waitFor({ timeout: 20000 });
+  await alice2.page.getByPlaceholder('ABCD-EFGH-…').fill(recovery.toLowerCase());
+  await alice2.page.getByRole('button', { name: 'Unlock my photos' }).click();
+  await alice2.page.getByText(/Restored \d+ keys?/).waitFor({ timeout: 20000 });
+  log(true, 'the recovery code restores the keys on a new phone (and a wrong code is refused)');
+  await alice2.ctx.close();
+  pages.splice(pages.findIndex(([n]) => n === 'Alice2'), 1);
 
   console.log('Alice sees the developed roll + notifications');
   await alice.page.goto(BASE + '/groups');
@@ -378,6 +447,11 @@ try {
   await alice.page.reload();
   await alice.page.getByRole('button', { name: /Shooting on Second Crew, Weekend roll/ }).waitFor();
   log(true, 'switching rolls from the shutter view sticks');
+  await alice.page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: /^Take photo/ }).click();
+  await noteAndDone(alice.page, 'plain group shot');
+  await savesSettled(alice.page);
+  await alice.page.getByLabel('11 exposures left').waitFor({ timeout: 15000 });
+  log(true, 'groups without encryption still shoot normally (unencrypted upload)');
   await shot(alice.page, '22-home-camera');
   await alice.page.goto(BASE + '/groups');
   await alice.page.getByRole('heading', { name: 'Groups' }).waitFor();

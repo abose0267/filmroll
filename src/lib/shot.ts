@@ -10,6 +10,8 @@ import { api, errorCode, errorMessage } from './api';
 import { processPhoto, type ProcessedPhoto } from './image';
 import { randomRequestId } from './format';
 import { enqueue, isNetworkError } from './queue';
+import { sealBlob, sealNote, senderKey } from './e2ee';
+import { SEALED_CONTENT_TYPE } from '@shared/sealed';
 import type { PresetId } from '@shared/types';
 
 export type ShotState = 'working' | 'uploaded' | 'committing' | 'saved' | 'queued' | 'cancelled' | 'failed';
@@ -43,6 +45,8 @@ interface Options {
   offline?: boolean;
   /** Uploading a shot that waited in the offline queue (server allows an older capture time). */
   queued?: boolean;
+  /** The group uses end-to-end encryption: seal the photo and note on the phone. */
+  encrypt?: boolean;
   onChange: (s: ShotSnapshot) => void;
 }
 
@@ -57,6 +61,8 @@ export class Shot {
   private commitP: Promise<void> | null = null;
   private note = { caption: '', location: '' };
   private savedNote = { caption: '', location: '' };
+  /** This device's key for the roll; photos and notes are sealed with it before they leave the phone. */
+  private key: Awaited<ReturnType<typeof senderKey>> | null = null;
 
   constructor(o: Options) {
     this.o = o;
@@ -85,6 +91,8 @@ export class Shot {
     // Reserve the exposure while the photo is still being processed (not possible offline).
     const reserving = this.o.offline ? null : this.reservation ? Promise.resolve(this.reservation) : api.reserveExposure({ groupId: this.o.groupId, rollId: this.o.rollId, requestId: this.requestId });
     reserving?.catch(() => undefined); // surfaced below
+    const keying = this.o.offline || !this.o.encrypt ? null : this.key ? Promise.resolve(this.key) : senderKey(this.o.uid, this.o.groupId, this.o.rollId);
+    keying?.catch(() => undefined);
     if (!this.processed && this.o.source) {
       this.processed = await processPhoto(this.o.source, { preset: this.o.preset, seed: this.o.seed ?? 7, dateStamp: this.o.dateStamp, capturedAt: this.o.capturedAt });
       this.o.source.close(); // the original pixels are no longer needed; nobody sees the shot until it develops
@@ -96,19 +104,23 @@ export class Shot {
     }
     const t1 = performance.now();
     this.reservation = await reserving;
+    this.key = keying ? await keying : null;
     const t2 = performance.now();
     if (this.isCancelled()) return this.release();
     const prefix = this.reservation.uploadPrefix;
     const ph = this.processed;
     if (!ph) throw new Error('Nothing to upload.');
-    const parts = [['thumb', ph.thumb.blob], ['display', ph.display.blob], ['original', ph.original.blob]] as const;
+    // End-to-end encryption (when the group has it on): only sealed bytes are uploaded.
+    const { groupId: g, rollId: r } = this.o;
+    const key = this.key;
+    const parts = await Promise.all((['thumb', 'display', 'original'] as const).map(async (v) => [v, key ? await sealBlob(key, ph[v].blob, g, r, v) : ph[v].blob] as const));
     const total = parts.reduce((s, [, b]) => s + b.size, 0);
     const sent: Record<string, number> = {};
     // All three files upload in parallel, each with its own retries.
     await Promise.all(parts.map(async ([name, blob]) => {
       for (let tries = 0; ; tries++) {
         try {
-          const task = uploadBytesResumable(ref(storage, prefix + name), blob, { contentType: 'image/jpeg', cacheControl: 'private, no-store' });
+          const task = uploadBytesResumable(ref(storage, prefix + name), blob, { contentType: key ? SEALED_CONTENT_TYPE : 'image/jpeg', cacheControl: 'private, no-store' });
           this.tasks.push(task);
           task.on('state_changed', (s) => {
             sent[name] = s.bytesTransferred;
@@ -186,9 +198,12 @@ export class Shot {
       const size = (k: keyof ProcessedPhoto) => ({ width: p[k].width, height: p[k].height });
       try {
         const tf = performance.now();
+        const note = this.key
+          ? { e2ee: { keyId: this.key.keyId }, noteEnc: await sealNote(this.key, this.o.groupId, this.o.rollId, this.note) }
+          : { caption: this.note.caption, location: this.note.location };
         const out = await api.finalizeExposure({
           groupId: this.o.groupId, rollId: this.o.rollId, reservationId: this.reservation!.reservationId,
-          caption: this.note.caption, location: this.note.location, capturedAt: this.o.capturedAt, clientNow: Date.now(), preset: this.o.preset, queued: !!this.o.queued,
+          ...note, capturedAt: this.o.capturedAt, clientNow: Date.now(), preset: this.o.preset, queued: !!this.o.queued,
           sizes: { original: size('original'), display: size('display'), thumb: size('thumb') },
         });
         this.timings.finalize = performance.now() - tf;
@@ -208,7 +223,8 @@ export class Shot {
   async saveNote() {
     if (this.snap.state !== 'saved' || !this.snap.photoId) return;
     if (this.note.caption === this.savedNote.caption && this.note.location === this.savedNote.location) return;
-    await api.setPhotoNote({ groupId: this.o.groupId, rollId: this.o.rollId, photoId: this.snap.photoId, ...this.note });
+    const note = this.key ? { noteEnc: await sealNote(this.key, this.o.groupId, this.o.rollId, this.note) } : { ...this.note };
+    await api.setPhotoNote({ groupId: this.o.groupId, rollId: this.o.rollId, photoId: this.snap.photoId, ...note });
     this.savedNote = { ...this.note };
   }
 
@@ -224,7 +240,7 @@ export class Shot {
     this.tasks.forEach((t) => t.cancel());
     await enqueue({
       id: this.requestId, uid: this.o.uid, groupId: this.o.groupId, rollId: this.o.rollId, preset: this.o.preset, capturedAt: this.o.capturedAt,
-      caption: this.note.caption, location: this.note.location, requestId: this.requestId, photo: this.processed, queuedAt: Date.now(), attempts: 0,
+      caption: this.note.caption, location: this.note.location, requestId: this.requestId, photo: this.processed, queuedAt: Date.now(), attempts: 0, encrypt: !!this.o.encrypt,
     });
     this.processed = null;
     this.set({ state: 'queued', error: null });

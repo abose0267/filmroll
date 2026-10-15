@@ -15,13 +15,17 @@ service firebase.storage {
     function isImage(maxBytes) {
       return request.resource.contentType.matches('image/(jpeg|png|webp)') && request.resource.size > 0 && request.resource.size <= maxBytes;
     }
+    // End-to-end encrypted photo (sealed on the phone; the server checks the header at finalize).
+    function isSealed(maxBytes) {
+      return request.resource.contentType == 'application/octet-stream' && request.resource.size > 0 && request.resource.size <= maxBytes + 128;
+    }
 
     match /uploads/{uid}/{resId}/{variant} {
       allow read: if false;
       allow create, update: if signedIn() && request.auth.uid == uid
-        && ((variant == 'original' && isImage(15 * 1024 * 1024))
-          || (variant == 'display' && isImage(4 * 1024 * 1024) && request.resource.contentType == 'image/jpeg')
-          || (variant == 'thumb' && isImage(400 * 1024) && request.resource.contentType == 'image/jpeg'));
+        && ((variant == 'original' && (isImage(15 * 1024 * 1024) || isSealed(15 * 1024 * 1024)))
+          || (variant == 'display' && ((isImage(4 * 1024 * 1024) && request.resource.contentType == 'image/jpeg') || isSealed(4 * 1024 * 1024)))
+          || (variant == 'thumb' && ((isImage(400 * 1024) && request.resource.contentType == 'image/jpeg') || isSealed(400 * 1024))));
       allow delete: if signedIn() && request.auth.uid == uid;
     }
 

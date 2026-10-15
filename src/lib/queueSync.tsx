@@ -1,5 +1,8 @@
 /** Uploads shots that waited in the offline queue: on start, when the connection returns, and every minute while any are waiting. */
 import { useEffect } from 'react';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from './firebase';
+import type { GroupDoc } from '@shared/types';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/components/ui';
 import { Shot } from './shot';
@@ -7,6 +10,12 @@ import { listQueued, removeQueued, updateQueued } from './queue';
 import { listenForeground } from './push';
 
 let running = false;
+
+/** Shots queued by an older version don't record it; ask the group (the server refuses plain photos in encrypted groups anyway). */
+async function groupEncrypts(gid: string): Promise<boolean> {
+  const g = await getDoc(doc(db, 'groups', gid)).catch(() => null);
+  return !!(g?.data() as GroupDoc | undefined)?.settings?.e2ee;
+}
 
 export async function syncQueue(uid: string): Promise<{ saved: number; lost: number }> {
   const out = { saved: 0, lost: 0 };
@@ -16,7 +25,7 @@ export async function syncQueue(uid: string): Promise<{ saved: number; lost: num
     for (const q of await listQueued(uid)) {
       const s = new Shot({
         uid, groupId: q.groupId, rollId: q.rollId, preset: q.preset, dateStamp: false, capturedAt: q.capturedAt,
-        processed: q.photo, requestId: q.requestId, queued: true, onChange: () => undefined,
+        processed: q.photo, requestId: q.requestId, queued: true, encrypt: q.encrypt ?? (await groupEncrypts(q.groupId)), onChange: () => undefined,
       });
       s.setNote(q.caption, q.location);
       await s.start();

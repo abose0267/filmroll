@@ -207,6 +207,10 @@ export const updateGroup = onCall(opts, async (req) => {
     update['settings.rollCreators'] = s.rollCreators;
   }
   if (s?.shareHistory !== undefined) update['settings.shareHistory'] = Boolean(s.shareHistory);
+  if (s?.e2ee !== undefined) {
+    if (typeof s.e2ee !== 'boolean') throw new HttpsError('invalid-argument', 'Invalid setting.');
+    update['settings.e2ee'] = s.e2ee;
+  }
   let autoOn = false;
   if (s?.autoRoll !== undefined) {
     const a = s.autoRoll as Partial<AutoRollSettings>;

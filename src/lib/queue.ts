@@ -21,6 +21,8 @@ export interface QueuedShot {
   photo: ProcessedPhoto;
   queuedAt: number;
   attempts: number;
+  /** Seal it before upload (the group uses end-to-end encryption). */
+  encrypt?: boolean;
 }
 
 const DB = 'filmroll';

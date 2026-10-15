@@ -5,6 +5,8 @@
  */
 import { useEffect, useState } from 'react';
 import { auth, photoEndpoint } from './firebase';
+import { KEYS_EVENT, openBlob } from './e2ee';
+import { isSealed } from '@shared/sealed';
 
 export type PhotoVariant = 'thumb' | 'display' | 'original';
 
@@ -41,7 +43,12 @@ export async function fetchPhotoBlob(gid: string, rid: string, pid: string, v: P
     for (let attempt = 0; attempt < 3; attempt++) {
       const token = await user.getIdToken(attempt > 0);
       const res = await fetch(photoUrl(gid, rid, pid, v, download), { headers: { authorization: `Bearer ${token}` } });
-      if (res.ok) return await res.blob();
+      if (res.ok) {
+        const blob = await res.blob();
+        // End-to-end encrypted photos are opened here, on the device.
+        const bytes = new Uint8Array(await blob.arrayBuffer());
+        return isSealed(bytes) ? await openBlob(user.uid, gid, rid, bytes, v) : blob;
+      }
       if (res.status === 401 && attempt === 0) continue;
       if (res.status >= 500 && attempt < 2) {
         await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
@@ -78,12 +85,27 @@ export function usePhoto(gid: string | undefined, rid: string | undefined, pid: 
     if (!gid || !rid || !pid || !enabled) return;
     let alive = true;
     setState({ url: null, error: null });
-    loadPhoto(gid, rid, pid, v).then(
-      (url) => alive && setState({ url, error: null }),
-      (e: Error) => alive && setState({ url: null, error: e.message }),
-    );
+    let failed = false;
+    const load = () =>
+      loadPhoto(gid, rid, pid, v).then(
+        (url) => {
+          failed = false;
+          if (alive) setState({ url, error: null });
+        },
+        (e: Error) => {
+          failed = true;
+          if (alive) setState({ url: null, error: e.message });
+        },
+      );
+    void load();
+    // A locked photo opens as soon as its key arrives (from a friend's phone or the recovery code).
+    const retry = () => {
+      if (failed) void load();
+    };
+    addEventListener(KEYS_EVENT, retry);
     return () => {
       alive = false;
+      removeEventListener(KEYS_EVENT, retry);
     };
   }, [gid, rid, pid, v, enabled]);
   return state;

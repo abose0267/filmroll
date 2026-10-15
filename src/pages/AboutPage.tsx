@@ -79,6 +79,12 @@ export default function AboutPage() {
           <h2 className="px-1 font-display text-2xl font-semibold">Questions</h2>
           <div className="rounded-3xl bg-cream px-4 shadow-soft">
             <Faq q="Can anyone see my photos before the roll develops?">No — not your friends, not you. Hidden photos can’t be read from the database or storage by anyone until the server marks the roll developed.</Faq>
+            <Faq q="Can FilmRoll itself see our photos?">
+              Normally photos are private to your group and hidden from everyone until the roll develops, but they’re stored like most apps store photos. For more,
+              a group can turn on <b>end-to-end encryption</b> (Group settings → Privacy): each photo and note is locked on the phone that took it, and only phones of
+              people in the group hold the key — not FilmRoll, not its developer, not Google. The trade-off: if everyone loses their keys and nobody saved a recovery code
+              (Profile → Encryption), those photos can’t be recovered by anyone.
+            </Faq>
             <Faq q="Why can’t I upload photos from my camera roll?">FilmRoll is about what’s happening now. Only shots taken in the app (or just now with your phone’s camera, if the in-app camera can’t open) go on the roll.</Faq>
             <Faq q="What if two of us take the last shot at once?">The roll never goes over its limit — one of you gets the last exposure and the other is told it’s full.</Faq>
             <Faq q="I don’t like winding before every shot.">Turn it off in Profile → Camera → “Wind the film before each shot”.</Faq>

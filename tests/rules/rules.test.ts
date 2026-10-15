@@ -198,3 +198,57 @@ describe('storage', () => {
     await assertFails(getBytes(ref(store(null), 'avatars/alice/a.jpg')));
   });
 });
+
+describe('end-to-end encryption', () => {
+  const pub = { x: 'A'.repeat(43), y: 'B'.repeat(43) };
+  const wrap = (keyId: string, deviceId: string, uid: string, from: string) => ({ keyId, deviceId, uid, from, eph: pub, iv: 'aXZpdml2aXZpdml2', wrapped: 'd3JhcHBlZA==', createdAt: Date.now() });
+
+  it('devices: owners publish public keys (once); signed-in users can read them', async () => {
+    await assertSucceeds(setDoc(doc(as('alice'), 'users', 'alice', 'devices', 'devAlice01'), { id: 'devAlice01', publicKey: pub, createdAt: Date.now() }));
+    await assertFails(setDoc(doc(as('bob'), 'users', 'alice', 'devices', 'devBob0001'), { id: 'devBob0001', publicKey: pub, createdAt: Date.now() }));
+    await assertFails(setDoc(doc(as('alice'), 'users', 'alice', 'devices', 'devAlice01'), { id: 'devAlice01', publicKey: { x: 'C', y: 'D' }, createdAt: Date.now() }));
+    await assertFails(setDoc(doc(as('alice'), 'users', 'alice', 'devices', 'devAlice02'), { id: 'devAlice02', publicKey: pub, privateKey: 'nope', createdAt: Date.now() }));
+    await assertSucceeds(getDoc(doc(as('bob'), 'users', 'alice', 'devices', 'devAlice01')));
+    await assertFails(getDoc(doc(as(null), 'users', 'alice', 'devices', 'devAlice01')));
+  });
+
+  it('key backups are private to their owner', async () => {
+    const b = { iv: 'aXZpdml2aXZpdml2', data: 'Y2lwaGVy', count: 1, updatedAt: Date.now() };
+    await assertSucceeds(setDoc(doc(as('alice'), 'users', 'alice', 'private', 'keyBackup'), b));
+    await assertSucceeds(getDoc(doc(as('alice'), 'users', 'alice', 'private', 'keyBackup')));
+    await assertFails(getDoc(doc(as('bob'), 'users', 'alice', 'private', 'keyBackup')));
+    await assertFails(setDoc(doc(as('bob'), 'users', 'alice', 'private', 'keyBackup'), b));
+    await assertFails(setDoc(doc(as('alice'), 'users', 'alice', 'private', 'other'), b));
+  });
+
+  it('key wraps: members write them as themselves, for members, never edited; outsiders see nothing', async () => {
+    const path = (id: string) => doc(as('alice'), 'groups', G, 'rolls', 'active', 'keys', id);
+    await assertSucceeds(setDoc(path('key12345_devBob0001'), wrap('key12345', 'devBob0001', 'bob', 'alice')));
+    await assertFails(setDoc(path('key12345_devEve0001'), wrap('key12345', 'devEve0001', 'eve', 'alice'))); // not a member
+    await assertFails(setDoc(path('key12345_devBob0002'), wrap('key12345', 'devBob0002', 'bob', 'bob'))); // pretending to be Bob
+    await assertFails(setDoc(path('wrongid'), wrap('key12345', 'devBob0003', 'bob', 'alice')));
+    await assertFails(setDoc(path('key12345_devBob0001'), wrap('key12345', 'devBob0001', 'bob', 'alice'))); // no overwrite
+    await assertSucceeds(getDoc(doc(as('bob'), 'groups', G, 'rolls', 'active', 'keys', 'key12345_devBob0001')));
+    await assertFails(getDoc(doc(as('eve'), 'groups', G, 'rolls', 'active', 'keys', 'key12345_devBob0001')));
+    await assertFails(setDoc(doc(as('eve'), 'groups', G, 'rolls', 'active', 'keys', 'key9_devEve0001'), wrap('key9', 'devEve0001', 'eve', 'eve')));
+  });
+
+  it('key requests: members ask for themselves; other members can answer; outsiders cannot', async () => {
+    const req = { groupId: G, rollId: 'dev', uid: 'bob', deviceId: 'devBob0001', keyIds: ['key12345'], createdAt: Date.now() };
+    await assertSucceeds(setDoc(doc(as('bob'), 'groups', G, 'keyRequests', 'devBob0001_dev'), req));
+    await assertFails(setDoc(doc(as('alice'), 'groups', G, 'keyRequests', 'devX00001_dev'), { ...req, deviceId: 'devX00001' })); // as someone else
+    await assertFails(setDoc(doc(as('eve'), 'groups', G, 'keyRequests', 'devEve0001_dev'), { ...req, uid: 'eve', deviceId: 'devEve0001' }));
+    await assertSucceeds(getDocs(collection(as('alice'), 'groups', G, 'keyRequests')));
+    await assertFails(getDocs(collection(as('eve'), 'groups', G, 'keyRequests')));
+    await assertSucceeds(updateDoc(doc(as('alice'), 'groups', G, 'keyRequests', 'devBob0001_dev'), { keyIds: [] }));
+    await assertFails(updateDoc(doc(as('alice'), 'groups', G, 'keyRequests', 'devBob0001_dev'), { uid: 'alice' }));
+    await assertSucceeds(deleteDoc(doc(as('alice'), 'groups', G, 'keyRequests', 'devBob0001_dev')));
+  });
+
+  it('sealed (encrypted) uploads are allowed as octet-stream, still unreadable', async () => {
+    const sealed = new Uint8Array([0x46, 0x52, 0x45, 0x31, 8, 1, 2, 3]);
+    await assertSucceeds(uploadBytes(ref(store('alice'), 'uploads/alice/res2/thumb'), sealed, { contentType: 'application/octet-stream' }));
+    await assertFails(getBytes(ref(store('alice'), 'uploads/alice/res2/thumb')));
+    await assertFails(uploadBytes(ref(store('alice'), 'uploads/alice/res2/display'), new Uint8Array(5 * 1024 * 1024), { contentType: 'application/octet-stream' }));
+  });
+});

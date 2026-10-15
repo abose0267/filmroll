@@ -16,6 +16,7 @@ import { runMonthlyRolls } from '../functions/src/rolls';
 import { endOfMonthEvening, monthName, zonedParts, zonedTimeToUtc, daysInMonth } from '../shared/time';
 import { DEFAULT_NOTIFICATION_PREFS, RESERVATION_TTL_MS } from '../shared/constants';
 import type { RollDoc } from '../shared/types';
+import { sealedHeader, toBase64 } from '../shared/sealed';
 
 const PROJECT = 'demo-filmroll';
 const PHOTO_URL = `http://127.0.0.1:5001/${PROJECT}/us-central1/photo`;
@@ -275,6 +276,53 @@ async function main() {
     await runMonthlyRolls(second);
     const g2 = (await getDoc(doc(alice.db, 'groups', mg))).data()!;
     check(g2.activeRollId === g1.activeRollId, 'a month is skipped while a roll is still in the camera');
+  }
+
+  console.log('\nEnd-to-end encryption (opt-in per group)');
+  {
+    const frank = await client('frank');
+    const { groupId: eg } = await call<{ groupId: string }>(alice, 'createGroup', { name: 'Locked Club', theme: 'dusk' });
+    const inv = await call<{ code: string }>(alice, 'getInvite', { groupId: eg });
+    await call(frank, 'joinGroup', { code: inv.code });
+    const { rollId: er } = await call<{ rollId: string }>(alice, 'startRoll', { groupId: eg, name: 'Secret roll', capacity: 12, developMode: 'full', preset: 'classic35' });
+    await rejects(call(frank, 'updateGroup', { groupId: eg, settings: { e2ee: true } }), /permission|admins/i, 'only admins can turn encryption on');
+    await call(alice, 'updateGroup', { groupId: eg, settings: { e2ee: true } });
+    check((await getDoc(doc(frank.db, 'groups', eg))).data()!.settings.e2ee === true, 'owner turned on end-to-end encryption');
+
+    // A plain (unencrypted) photo is refused once the group is encrypted.
+    const plain = await shoot(alice, eg, er);
+    await rejects(plain.fin(), /end-to-end encryption/i, 'plain photos are refused in an encrypted group');
+
+    // A sealed photo: the server only sees the header + ciphertext.
+    const keyId = 'kAlice_0123456789';
+    const iv = Uint8Array.from({ length: 12 }, (_, i) => i);
+    const sealedBytes = new Uint8Array([...sealedHeader(keyId, iv), ...crypto.getRandomValues(new Uint8Array(200))]);
+    const sealedFin = async (c: Client, kid: string, bytes = sealedBytes) => {
+      const res = await call<{ reservationId: string; uploadPrefix: string }>(c, 'reserveExposure', { groupId: eg, rollId: er, requestId: `seal${++reqN}${Date.now()}` });
+      for (const v of ['original', 'display', 'thumb']) await uploadBytes(ref(c.st, res.uploadPrefix + v), bytes, { contentType: 'application/octet-stream' });
+      const s1 = { width: 1, height: 1 };
+      return call<{ photoId: string }>(c, 'finalizeExposure', {
+        groupId: eg, rollId: er, reservationId: res.reservationId, e2ee: { keyId: kid }, noteEnc: toBase64(crypto.getRandomValues(new Uint8Array(60))),
+        capturedAt: Date.now(), clientNow: Date.now(), preset: 'classic35', sizes: { original: s1, display: s1, thumb: s1 },
+      });
+    };
+    await rejects(sealedFin(alice, 'kSomeoneElse_000'), /sealed correctly/i, 'the sealed header must name the key the client claims');
+    await rejects(sealedFin(alice, keyId, JPEG), /sealed correctly/i, 'a plain JPEG can’t pretend to be sealed');
+    const sf = await sealedFin(alice, keyId);
+    check(!!sf.photoId, 'a sealed photo is accepted');
+    await rejects(call(alice, 'setPhotoNote', { groupId: eg, rollId: er, photoId: sf.photoId, caption: 'plain', location: '' }), /invalid note/i, 'an encrypted shot only takes a sealed note');
+    await call(alice, 'setPhotoNote', { groupId: eg, rollId: er, photoId: sf.photoId, noteEnc: toBase64(crypto.getRandomValues(new Uint8Array(40))) });
+    check(true, 'the sealed note can be updated before development');
+
+    await rollRef(eg, er).update({ status: 'developed', developedAt: Date.now() });
+    const pd = (await getDoc(doc(frank.db, 'groups', eg, 'rolls', er, 'photos', sf.photoId))).data()!;
+    check(pd.caption === '' && pd.location === '' && typeof pd.noteEnc === 'string' && pd.e2ee?.keyId === keyId, 'the server stores no readable caption or location — only the sealed note');
+    const got = new Uint8Array(await (await fetchPhoto(frank, eg, er, sf.photoId, 'original')).arrayBuffer());
+    check(got.length === sealedBytes.length && got.every((b, i) => b === sealedBytes[i]), 'after development members get the sealed bytes, untouched, to open on their phones');
+    check(!(got[0] === 0xff && got[1] === 0xd8), 'what the server stores and serves is not an image');
+    await call(alice, 'updateGroup', { groupId: eg, settings: { e2ee: false } });
+    check((await getDoc(doc(frank.db, 'groups', eg))).data()!.settings.e2ee === false, 'encryption can be turned off again (for new photos)');
+    await deleteApp(frank.app);
   }
 
   console.log('\nAnalytics (owner-only)');

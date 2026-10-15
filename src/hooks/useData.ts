@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { collection, doc, limit, onSnapshot, orderBy, query, where } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+import { KEYS_EVENT, openNote } from '@/lib/e2ee';
 import { useAuth } from './useAuth';
 import { useCollection, useDoc } from './useFirestore';
 import type { CommentDoc, FavoriteDoc, GroupDoc, MemberDoc, NotificationDoc, PhotoDoc, ReactionDoc, RollDoc } from '@shared/types';
@@ -81,8 +82,35 @@ export function useDevelopedRolls(groupIds: string[]): { rolls: RollDoc[]; loadi
   return { rolls, loading: groupIds.some((g) => !(g in map)) };
 }
 
+/** A developed roll's photos, with end-to-end encrypted notes opened on this device. */
 export function usePhotos(gid: string | undefined, rid: string | undefined, enabled: boolean) {
-  return useCollection<PhotoDoc>(gid && rid && enabled ? query(collection(db, 'groups', gid, 'rolls', rid, 'photos'), orderBy('frame')) : null, `p/${gid}/${rid}/${enabled}`);
+  const { user } = useAuth();
+  const live = useCollection<PhotoDoc>(gid && rid && enabled ? query(collection(db, 'groups', gid, 'rolls', rid, 'photos'), orderBy('frame')) : null, `p/${gid}/${rid}/${enabled}`);
+  const [notes, setNotes] = useState<Record<string, { caption: string; location: string }>>({});
+  const [keysTick, setKeysTick] = useState(0);
+  useEffect(() => {
+    const on = () => setKeysTick((n) => n + 1);
+    addEventListener(KEYS_EVENT, on);
+    return () => removeEventListener(KEYS_EVENT, on);
+  }, []);
+  useEffect(() => {
+    if (!user || !gid || !rid) return;
+    let alive = true;
+    for (const p of live.data) {
+      const k = p.noteEnc;
+      if (!k || notes[k]) continue;
+      openNote(user.uid, gid, rid, k).then((n) => alive && setNotes((m) => ({ ...m, [k]: n })), () => undefined);
+    }
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [live.data, user, gid, rid, keysTick]);
+  const data = useMemo(
+    () => live.data.map((p) => (p.noteEnc ? { ...p, ...(notes[p.noteEnc] ?? { caption: '', location: '' }) } : p)),
+    [live.data, notes],
+  );
+  return { ...live, data };
 }
 
 export function useComments(gid: string | undefined, rid: string | undefined, enabled: boolean) {
